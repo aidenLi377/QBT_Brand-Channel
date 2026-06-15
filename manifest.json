@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "QBT 控盘数据采集",
+  "version": "1.0.0",
+  "description": "自动检索 Nint 品牌数据，支持批量品牌采集并导出 CSV",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://art.nint.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "QBT 控盘数据采集"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://art.nint.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
