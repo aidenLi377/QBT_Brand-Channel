@@ -1,0 +1,219 @@
+// popup.js — 弹窗逻辑
+
+const urlInput = document.getElementById('targetUrl');
+const brandListTextarea = document.getElementById('brandList');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const exportBtn = document.getElementById('exportBtn');
+const progressSection = document.getElementById('progressSection');
+const progressText = document.getElementById('progressText');
+const currentBrand = document.getElementById('currentBrand');
+const progressFill = document.getElementById('progressFill');
+const statusMessage = document.getElementById('statusMessage');
+
+let allResults = [];
+let pollTimer = null;
+
+// 恢复上次保存的设置
+chrome.storage.local.get(['savedUrl', 'savedBrands', 'scraperState'], (data) => {
+  if (data.savedUrl) urlInput.value = data.savedUrl;
+  if (data.savedBrands) brandListTextarea.value = data.savedBrands;
+  if (data.scraperState && data.scraperState.status === 'running') {
+    updateUI('running');
+    startPolling();
+  } else if (data.scraperState && data.scraperState.status === 'done') {
+    allResults = data.scraperState.results || [];
+    updateUI('done');
+  }
+});
+
+function updateUI(status) {
+  switch (status) {
+    case 'idle':
+      startBtn.classList.remove('hidden');
+      stopBtn.classList.add('hidden');
+      exportBtn.classList.add('hidden');
+      progressSection.classList.add('hidden');
+      urlInput.disabled = false;
+      brandListTextarea.disabled = false;
+      startBtn.disabled = false;
+      break;
+    case 'running':
+      startBtn.disabled = true;
+      startBtn.textContent = '采集中...';
+      stopBtn.classList.remove('hidden');
+      exportBtn.classList.add('hidden');
+      progressSection.classList.remove('hidden');
+      urlInput.disabled = true;
+      brandListTextarea.disabled = true;
+      break;
+    case 'done':
+      startBtn.classList.remove('hidden');
+      startBtn.textContent = '开始采集';
+      startBtn.disabled = false;
+      stopBtn.classList.add('hidden');
+      exportBtn.classList.remove('hidden');
+      progressSection.classList.remove('hidden');
+      urlInput.disabled = false;
+      brandListTextarea.disabled = false;
+      break;
+    case 'stopped':
+      startBtn.classList.remove('hidden');
+      startBtn.textContent = '开始采集';
+      startBtn.disabled = false;
+      stopBtn.classList.add('hidden');
+      exportBtn.classList.remove('hidden');
+      urlInput.disabled = false;
+      brandListTextarea.disabled = false;
+      break;
+  }
+}
+
+function showStatus(message, type) {
+  statusMessage.textContent = message;
+  statusMessage.className = 'status-message ' + type;
+  statusMessage.classList.remove('hidden');
+}
+
+function updateProgress(progress) {
+  const pct = progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0;
+  progressText.textContent = `进度: ${progress.completed}/${progress.total}`;
+  currentBrand.textContent = progress.current || '';
+  progressFill.style.width = pct + '%';
+  // Update ARIA attributes
+  const progressBar = progressFill.parentElement;
+  progressBar.setAttribute('aria-valuenow', pct);
+  progressSection.classList.remove('hidden');
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    chrome.storage.local.get(['scraperState'], (data) => {
+      const state = data.scraperState;
+      if (!state) return;
+      if (state.status === 'running') {
+        updateProgress(state);
+      } else if (state.status === 'done') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        allResults = state.results || [];
+        updateProgress(state);
+        updateUI('done');
+        showStatus(`采集完成！共 ${allResults.length} 条数据`, 'success');
+      } else if (state.status === 'stopped') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        allResults = state.results || [];
+        updateUI('stopped');
+        showStatus('采集已停止', 'info');
+      } else if (state.status === 'error') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        updateUI('done');
+        showStatus(state.error || '采集出错', 'error');
+      }
+    });
+  }, 500);
+}
+
+startBtn.addEventListener('click', async () => {
+  const url = urlInput.value.trim();
+  const brandsText = brandListTextarea.value.trim();
+
+  if (!url) { showStatus('请输入目标 URL', 'error'); return; }
+  if (!brandsText) { showStatus('请输入品牌列表', 'error'); return; }
+
+  const brands = brandsText.split('\n')
+    .map(b => b.trim())
+    .filter(b => b.length > 0);
+
+  if (brands.length === 0) { showStatus('品牌列表为空', 'error'); return; }
+
+  // 保存设置
+  chrome.storage.local.set({ savedUrl: url, savedBrands: brandsText });
+
+  // 初始化状态
+  const state = {
+    status: 'running',
+    completed: 0,
+    total: brands.length,
+    current: '',
+    results: []
+  };
+  chrome.storage.local.set({ scraperState: state });
+
+  updateUI('running');
+  showStatus('正在初始化...', 'info');
+  startPolling();
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab.url.includes('art.nint.com')) {
+      showStatus('请在 art.nint.com 页面上使用此扩展', 'error');
+      chrome.storage.local.set({ scraperState: { status: 'error', error: '非 Nint 页面' } });
+      updateUI('idle');
+      return;
+    }
+    chrome.tabs.sendMessage(tab.id, {
+      action: 'startScraping',
+      brands: brands
+    });
+  } catch (err) {
+    showStatus('通信失败: ' + err.message, 'error');
+    updateUI('idle');
+  }
+});
+
+stopBtn.addEventListener('click', async () => {
+  chrome.storage.local.set({
+    scraperState: { status: 'stopped', completed: 0, total: 0, current: '', results: allResults }
+  });
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    chrome.tabs.sendMessage(tab.id, { action: 'stopScraping' });
+  } catch (err) { /* ignore */ }
+});
+
+exportBtn.addEventListener('click', () => {
+  if (allResults.length === 0) {
+    showStatus('没有数据可导出', 'error');
+    return;
+  }
+
+  // 收集所有唯一的月份列名
+  const monthKeys = new Set();
+  allResults.forEach(r => Object.keys(r).forEach(k => {
+    if (k !== 'channel' && k !== 'brand' && k !== 'category') monthKeys.add(k);
+  }));
+  const sortedMonths = Array.from(monthKeys).sort();
+
+  // 构建 CSV
+  const headers = ['渠道', '品牌名称', '类别名称', ...sortedMonths];
+  const rows = allResults.map(r => {
+    const cells = [
+      r.channel,
+      r.brand,
+      r.category,
+      ...sortedMonths.map(m => r[m] || '')
+    ];
+    return cells.map(c => {
+      const str = String(c);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    }).join(',');
+  });
+
+  const csv = '﻿' + headers.join(',') + '\n' + rows.join('\n'); // BOM for Excel
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'qbt_data_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showStatus('CSV 已下载', 'success');
+});
