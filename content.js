@@ -22,9 +22,6 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 确保指标只有"销售额"被选中
-  ensureOnlySalesSelected();
-
   // 直接从 DOM 获取表格数据（tr/td → TSV）
   const tsv = getTableData();
   const data = parseTSV(tsv);
@@ -264,8 +261,15 @@ function waitForResultTable(timeout = 15000) {
     const startTime = Date.now();
     const check = () => {
       if (Date.now() - startTime > timeout) { resolve(false); return; }
-      const tsv = getTableData();
-      if (tsv && tsv.trim().length > 0) { console.log('[QBT] 结果表格已出现'); resolve(true); return; }
+      // 检查页面中是否存在包含"0-∞元"的表格
+      const allTables = document.querySelectorAll('table');
+      for (const t of allTables) {
+        if (t.textContent.includes('0-∞元')) {
+          console.log('[QBT] 结果表格已出现（检测到0-∞元）');
+          resolve(true);
+          return;
+        }
+      }
       setTimeout(check, 500);
     };
     check();
@@ -276,30 +280,47 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// === 直接从 DOM 获取表格数据（遍历 tr/td 构建 TSV） ===
+// === 从 DOM 获取正确的数据表格（按内容特征"0-∞元"定位） ===
+// 页面上可能有多个表（销量/销售额/同比），只有含"0-∞元"的是价格段数据表
 function getTableData() {
-  // 在结果区域找表格
-  const resultArea = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
-  );
-  if (!resultArea) { console.warn('[QBT] 未找到结果区域'); return ''; }
+  const allTables = document.querySelectorAll('table');
 
-  // 查找所有表格，取第一个有数据的
-  const tables = resultArea.querySelectorAll('table');
-  let bestTable = null;
-  let maxCells = 0;
-  for (const t of tables) {
-    const cells = t.querySelectorAll('td, th');
-    if (cells.length > maxCells) {
-      maxCells = cells.length;
-      bestTable = t;
+  // 策略1: 找到包含"0-∞元"的表格（价格段数据表的特征）
+  for (const t of allTables) {
+    if (t.textContent.includes('0-∞元')) {
+      console.log('[QBT] 通过"0-∞元"定位到数据表');
+      return buildTSV(t);
     }
   }
 
-  if (!bestTable) { console.warn('[QBT] 未找到数据表格'); return ''; }
+  // 策略2: 找包含"销售额"的表格
+  for (const t of allTables) {
+    if (t.textContent.includes('销售额')) {
+      console.log('[QBT] 通过"销售额"定位到数据表');
+      return buildTSV(t);
+    }
+  }
 
-  // 遍历 tr 元素读取每个单元格
-  const trs = bestTable.querySelectorAll('tr');
+  // 策略3: 回退到结果区域最大的表格
+  const resultArea = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
+  );
+  if (resultArea) {
+    const tables = resultArea.querySelectorAll('table');
+    let best = null, max = 0;
+    for (const t of tables) {
+      const n = t.querySelectorAll('td, th').length;
+      if (n > max) { max = n; best = t; }
+    }
+    if (best) { console.log('[QBT] 回退：使用最大表格'); return buildTSV(best); }
+  }
+
+  console.warn('[QBT] 未找到数据表格');
+  return '';
+}
+
+function buildTSV(table) {
+  const trs = table.querySelectorAll('tr');
   const rows = [];
   for (const tr of trs) {
     const cells = tr.querySelectorAll('td, th');
@@ -307,9 +328,8 @@ function getTableData() {
     const rowData = Array.from(cells).map(c => c.textContent.trim());
     rows.push(rowData.join('\t'));
   }
-
   const result = rows.join('\n');
-  console.log('[QBT] 表格共', trs.length, '行,', maxCells, '个单元格, TSV长度:', result.length);
+  console.log('[QBT] 构建TSV:', trs.length, '行, 长度:', result.length);
   return result;
 }
 
