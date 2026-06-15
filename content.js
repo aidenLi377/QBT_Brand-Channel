@@ -180,10 +180,14 @@ function ensureCheckboxSelected(labelText) {
   if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
-  if (input && (input.type === 'checkbox' || input.type === 'radio') && input.checked) return;
-
+  const inputChecked = input && (input.type === 'checkbox' || input.type === 'radio') && input.checked;
   const afterStyle = window.getComputedStyle(targetLabel, '::after');
-  if (afterStyle && afterStyle.content && afterStyle.content !== 'none') return;
+  const afterContent = afterStyle ? afterStyle.content : 'none';
+
+  console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
+
+  if (inputChecked) return;
+  if (afterContent && afterContent !== 'none') return;
 
   console.log('[QBT] 点击选中"' + labelText + '"');
   targetLabel.click();
@@ -194,10 +198,14 @@ function ensureCheckboxDeselected(labelText) {
   if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
-  if (input && (input.type === 'checkbox' || input.type === 'radio') && !input.checked) return;
-
+  const inputChecked = input && (input.type === 'checkbox' || input.type === 'radio') && input.checked;
   const afterStyle = window.getComputedStyle(targetLabel, '::after');
-  if (!afterStyle || !afterStyle.content || afterStyle.content === 'none') return;
+  const afterContent = afterStyle ? afterStyle.content : 'none';
+
+  console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
+
+  if (!inputChecked) return;
+  if (!afterContent || afterContent === 'none') return;
 
   console.log('[QBT] 点击取消"' + labelText + '"');
   targetLabel.click();
@@ -334,7 +342,7 @@ function parseTableDOM(table) {
   const monthRanges = [];
   for (const cell of headerCells) {
     const text = cell.textContent.trim();
-    const span = parseInt(cell.getAttribute('colSpan') || '1', 10);
+    const span = cell.colSpan || 1;
     if (text && text !== '类别名称' && text !== '总计' && /^\d{6}$/.test(text)) {
       monthRanges.push({ month: text, start: colIdx, end: colIdx + span });
     }
@@ -387,13 +395,38 @@ function parseTableDOM(table) {
 
 // === 从面包屑获取类目名称 ===
 function getCategoryFromBreadcrumb() {
-  const breadcrumb = getElementByXPath(
+  // 尝试多个 XPath
+  let breadcrumb = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]/div[1]'
   );
+  if (!breadcrumb) {
+    breadcrumb = getElementByXPath(
+      '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
+    );
+  }
+  // 回退：查找页面上所有面包屑结构（含多个 a 标签的容器）
+  if (!breadcrumb) {
+    const allDivs = document.querySelectorAll('div');
+    for (const div of allDivs) {
+      const links = div.querySelectorAll('a');
+      if (links.length >= 2) {
+        const texts = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
+        if (texts.length >= 2) {
+          const last = texts[texts.length - 1];
+          if (last.length > 1 && last.length < 30) {
+            console.log('[QBT] 回退找到类目:', last, '(来自', texts.length, '级面包屑)');
+            return last;
+          }
+        }
+      }
+    }
+  }
+
   if (!breadcrumb) { console.warn('[QBT] 未找到面包屑元素'); return ''; }
 
   const links = breadcrumb.querySelectorAll('a');
   const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
+  console.log('[QBT] 面包屑层级:', names);
   return names.length > 0 ? names[names.length - 1] : '';
 }
 
