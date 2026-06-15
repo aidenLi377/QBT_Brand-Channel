@@ -238,40 +238,41 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// === 直接从 DOM 获取表格数据（类似影刀 RPA 的思路） ===
-// table.innerText 自动生成 TSV 格式，跟复制出来的数据一模一样，无需剪贴板
+// === 直接从 DOM 获取表格数据（遍历 tr/td 构建 TSV） ===
 function getTableData() {
-  // 用一键复制按钮的位置反向定位结果表格
-  const copyBtn = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]/div[1]/div[1]/button'
-  );
-  if (!copyBtn) { console.warn('[QBT] 未找到结果表格'); return ''; }
-
-  // 从按钮向上找到表格所在区域，再向下找 table
+  // 在结果区域找表格
   const resultArea = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]'
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
   );
   if (!resultArea) { console.warn('[QBT] 未找到结果区域'); return ''; }
 
-  // div[2] 区域下找表格
-  const tableArea = resultArea.querySelector('div:nth-child(2)');
-  if (!tableArea) { console.warn('[QBT] 未找到表格区域'); return ''; }
-
-  const table = tableArea.querySelector('table');
-  if (!table) {
-    // 回退：全局搜索
-    const allTables = resultArea.querySelectorAll('table');
-    for (const t of allTables) {
-      if (t.querySelector('tbody tr') && t.innerText.trim().length > 0) {
-        return t.innerText;
-      }
+  // 查找所有表格，取第一个有数据的
+  const tables = resultArea.querySelectorAll('table');
+  let bestTable = null;
+  let maxCells = 0;
+  for (const t of tables) {
+    const cells = t.querySelectorAll('td, th');
+    if (cells.length > maxCells) {
+      maxCells = cells.length;
+      bestTable = t;
     }
-    console.warn('[QBT] 未找到数据表格');
-    return '';
   }
 
-  console.log('[QBT] 找到表格, innerText 长度:', table.innerText.length);
-  return table.innerText;
+  if (!bestTable) { console.warn('[QBT] 未找到数据表格'); return ''; }
+
+  // 遍历 tr 元素读取每个单元格
+  const trs = bestTable.querySelectorAll('tr');
+  const rows = [];
+  for (const tr of trs) {
+    const cells = tr.querySelectorAll('td, th');
+    if (cells.length === 0) continue;
+    const rowData = Array.from(cells).map(c => c.textContent.trim());
+    rows.push(rowData.join('\t'));
+  }
+
+  const result = rows.join('\n');
+  console.log('[QBT] 表格共', trs.length, '行,', maxCells, '个单元格, TSV长度:', result.length);
+  return result;
 }
 
 // === 解析 TSV 数据 ===
@@ -323,7 +324,7 @@ function parseTSV(tsvText) {
 // === 从面包屑获取类目名称 ===
 function getCategoryFromBreadcrumb() {
   const breadcrumb = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]/div[1]'
   );
   if (!breadcrumb) { console.warn('[QBT] 未找到面包屑元素'); return ''; }
 
