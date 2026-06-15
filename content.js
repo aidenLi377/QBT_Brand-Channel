@@ -1,13 +1,21 @@
 // content.js — Nint 页面 DOM 操控自动化
 
 let stopFlag = false;
+let isRunning = false;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'startScraping') {
+    if (isRunning) {
+      sendResponse({ accepted: false, reason: 'already running' });
+      return;
+    }
     stopFlag = false;
-    scrapeAllBrands(message.brands);
+    isRunning = true;
+    scrapeAllBrands(message.brands).finally(() => { isRunning = false; });
+    sendResponse({ accepted: true });
   } else if (message.action === 'stopScraping') {
     stopFlag = true;
+    sendResponse({ accepted: true });
   }
 });
 
@@ -70,7 +78,7 @@ function ensureCustomSelected() {
   const select = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[2]/td[2]/div/select'
   );
-  if (!select) return;
+  if (!select) { console.warn('[QBT] 未找到"自定义"下拉框元素'); return; }
 
   const selectedOption = select.options[select.selectedIndex];
   if (selectedOption && selectedOption.text.includes('自定义')) return;
@@ -84,7 +92,7 @@ function inputBrandName(brand) {
   const input = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[2]/td[2]/div/input'
   );
-  if (!input) return;
+  if (!input) { console.warn('[QBT] 未找到品牌输入框元素'); return; }
 
   // 清空并输入新值
   input.value = '';
@@ -103,7 +111,7 @@ function ensureCheckboxSelected(labelText) {
       break;
     }
   }
-  if (!targetLabel) return;
+  if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   // 检查是否已选中：查找关联的 input
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
@@ -126,7 +134,7 @@ function ensureCheckboxDeselected(labelText) {
       break;
     }
   }
-  if (!targetLabel) return;
+  if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
   if (input && (input.type === 'checkbox' || input.type === 'radio') && !input.checked) return;
@@ -143,6 +151,7 @@ function clickSearch() {
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/div[2]/button'
   );
   if (btn) btn.click();
+  else console.warn('[QBT] 未找到检索按钮');
 }
 
 function waitForTableReload(timeout = 30000) {
@@ -151,7 +160,7 @@ function waitForTableReload(timeout = 30000) {
 
     const check = () => {
       if (stopFlag) { resolve(); return; }
-      if (Date.now() - startTime > timeout) { resolve(); return; }
+      if (Date.now() - startTime > timeout) { console.warn('[QBT] 表格加载超时'); resolve(); return; }
 
       // 检查表格是否已重新加载
       const colgroup = getElementByXPath(
