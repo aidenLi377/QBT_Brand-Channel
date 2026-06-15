@@ -79,15 +79,26 @@ async function resumeAfterReload(task) {
 
   const nextBrand = task.brands[nextBrandIdx];
 
+  const newPendingTask = {
+    brand: nextBrand,
+    channel: nextChannel,
+    brandIndex: nextBrandIdx,
+    brands: task.brands,
+    totalBrands: task.totalBrands,
+    results: results,
+    stopFlag: stopFlag
+  };
+
   updateState({
     completed: nextBrandIdx,
     total: task.totalBrands,
     current: nextBrand,
-    results: results
+    results: results,
+    pendingTask: newPendingTask
   });
   updateBadge(nextBrandIdx, task.totalBrands);
 
-  await setupAndSearch(nextBrand, nextChannel, nextBrandIdx, task.brands, task.totalBrands, results);
+  await setupAndSearch(nextBrand, nextChannel, results);
 }
 
 // === 消息监听 ===
@@ -118,11 +129,24 @@ async function startNewScraping(brands) {
     brands: brands
   });
 
-  await setupAndSearch(brand, 'all', 0, brands, brands.length, []);
+  // 设置 pendingTask（startNewScraping 是第一次，没有 resumeAfterReload）
+  updateState({
+    pendingTask: {
+      brand: brand,
+      channel: 'all',
+      brandIndex: 0,
+      brands: brands,
+      totalBrands: brands.length,
+      results: [],
+      stopFlag: false
+    }
+  });
+
+  await setupAndSearch(brand, 'all');
 }
 
 // === 设置页面并点击检索 ===
-async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, results) {
+async function setupAndSearch(brand, channel) {
   console.log('[QBT] === 设置表单: 品牌=' + brand + ', 渠道=' + channel + ' ===');
 
   ensureCustomSelected();
@@ -137,20 +161,7 @@ async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, r
 
   ensureSortOrderSelected('销售额');
 
-  updateState({
-    pendingTask: {
-      brand: brand,
-      channel: channel,
-      brandIndex: brandIndex,
-      brands: brands,
-      totalBrands: totalBrands,
-      results: results,
-      stopFlag: stopFlag
-    }
-  });
-
   console.log('[QBT] === 表单设置完成，即将点击检索 ===');
-  // 短暂延迟确保日志可见（页面即将跳转）
   await sleep(300);
   clickSearch();
 }
