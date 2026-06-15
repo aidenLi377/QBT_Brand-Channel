@@ -266,32 +266,42 @@ function copyAndParseData() {
     }
 
     let resolved = false;
+    let capturedText = null;
 
-    // 拦截 copy 事件获取数据
-    const copyHandler = (e) => {
-      if (resolved) return;
-      const tsv = e.clipboardData.getData('text/plain');
-      e.preventDefault(); // 阻止写入系统剪贴板（可选，保持干净）
-      e.stopImmediatePropagation();
-      document.removeEventListener('copy', copyHandler, true);
-      resolved = true;
-      resolve(parseTSV(tsv));
+    // 猴子补丁拦截 navigator.clipboard.write（页面用的是 Clipboard API）
+    const originalWrite = navigator.clipboard.write.bind(navigator.clipboard);
+    navigator.clipboard.write = async function (clipboardItems) {
+      console.log('[QBT] 拦截到 clipboard.write, items:', clipboardItems.length);
+      for (const item of clipboardItems) {
+        if (item.types.includes('text/plain')) {
+          try {
+            const blob = await item.getType('text/plain');
+            capturedText = await blob.text();
+            console.log('[QBT] 捕获到文本数据, 长度:', capturedText.length);
+          } catch (e) {
+            console.warn('[QBT] 提取 text/plain 失败:', e.message);
+          }
+        }
+      }
     };
-
-    document.addEventListener('copy', copyHandler, true);
 
     // 点击按钮
     btn.click();
 
-    // 超时保护
-    setTimeout(() => {
-      if (!resolved) {
-        document.removeEventListener('copy', copyHandler, true);
-        resolved = true;
-        console.warn('[QBT] 一键复制超时');
+    // 等待 ClipboardItem promises 完成
+    setTimeout(async () => {
+      navigator.clipboard.write = originalWrite;
+      if (resolved) return;
+      resolved = true;
+
+      if (capturedText) {
+        console.log('[QBT] 成功捕获剪贴板数据');
+        resolve(parseTSV(capturedText));
+      } else {
+        console.warn('[QBT] 未能捕获剪贴板数据');
         resolve([]);
       }
-    }, 5000);
+    }, 1500);
   });
 }
 
