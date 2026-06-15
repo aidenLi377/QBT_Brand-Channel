@@ -22,6 +22,18 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
+  // 检查是否显示"暂时没有符合条件的数据"
+  if (checkNoData()) {
+    console.log('[QBT] 品牌"' + task.brand + '"无数据，跳过');
+    let errors = task.errors || [];
+    if (!errors.find(e => e.brand === task.brand)) {
+      errors.push({ brand: task.brand, channel: '' });
+    }
+    // 直接跳到下一个品牌
+    skipToNextBrand(task, task.results || [], errors);
+    return;
+  }
+
   // 直接从 DOM 解析表格（利用 colSpan 定位"销售额"列）
   const table = findBestTable();
   const data = table ? parseTableDOM(table) : [];
@@ -485,6 +497,59 @@ function getCategoryFromBreadcrumb() {
 }
 
 // === 工具函数 ===
+// === 检查页面是否显示"暂无符合条件的数据" ===
+function checkNoData() {
+  const el = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div'
+  );
+  if (!el) return false;
+  return el.textContent.includes('暂时没有符合条件的数据');
+}
+
+// === 跳过当前品牌，直接进入下一个 ===
+function skipToNextBrand(task, results, errors) {
+  const nextBrandIdx = task.brandIndex + 1;
+  if (nextBrandIdx >= task.brands.length || stopFlag) {
+    updateState({
+      status: stopFlag ? 'stopped' : 'done',
+      completed: task.totalBrands,
+      total: task.totalBrands,
+      current: '',
+      currentChannel: '',
+      results: results,
+      errors: errors,
+      pendingTask: null
+    });
+    updateBadge(task.totalBrands, task.totalBrands);
+    return;
+  }
+
+  const nextBrand = task.brands[nextBrandIdx];
+  const newPendingTask = {
+    brand: nextBrand,
+    channel: 'all',
+    brandIndex: nextBrandIdx,
+    brands: task.brands,
+    totalBrands: task.totalBrands,
+    results: results,
+    errors: errors,
+    stopFlag: stopFlag
+  };
+
+  updateState({
+    completed: nextBrandIdx,
+    total: task.totalBrands,
+    current: nextBrand,
+    currentChannel: '全部',
+    results: results,
+    errors: errors,
+    pendingTask: newPendingTask
+  });
+  updateBadge(nextBrandIdx, task.totalBrands);
+
+  setupAndSearch(nextBrand, 'all');
+}
+
 function getElementByXPath(xpath) {
   const result = document.evaluate(
     xpath, document, null,
