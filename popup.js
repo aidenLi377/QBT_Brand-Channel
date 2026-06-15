@@ -1,6 +1,5 @@
 // popup.js — 弹窗逻辑
 
-const urlInput = document.getElementById('targetUrl');
 const brandListTextarea = document.getElementById('brandList');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -18,8 +17,7 @@ let pollTimer = null;
 let polling = false;
 
 // 恢复上次保存的设置
-chrome.storage.local.get(['savedUrl', 'savedBrands', 'scraperState'], (data) => {
-  if (data.savedUrl) urlInput.value = data.savedUrl;
+chrome.storage.local.get(['savedBrands', 'scraperState'], (data) => {
   if (data.savedBrands) brandListTextarea.value = data.savedBrands;
   if (data.scraperState && data.scraperState.status === 'running') {
     updateUI('running');
@@ -37,7 +35,6 @@ function updateUI(status) {
       stopBtn.classList.add('hidden');
       exportBtn.classList.add('hidden');
       progressSection.classList.add('hidden');
-      urlInput.disabled = false;
       brandListTextarea.disabled = false;
       startBtn.disabled = false;
       break;
@@ -47,7 +44,6 @@ function updateUI(status) {
       stopBtn.classList.remove('hidden');
       exportBtn.classList.add('hidden');
       progressSection.classList.remove('hidden');
-      urlInput.disabled = true;
       brandListTextarea.disabled = true;
       break;
     case 'done':
@@ -57,7 +53,6 @@ function updateUI(status) {
       stopBtn.classList.add('hidden');
       exportBtn.classList.remove('hidden');
       progressSection.classList.remove('hidden');
-      urlInput.disabled = false;
       brandListTextarea.disabled = false;
       break;
     case 'stopped':
@@ -66,7 +61,6 @@ function updateUI(status) {
       startBtn.disabled = false;
       stopBtn.classList.add('hidden');
       exportBtn.classList.remove('hidden');
-      urlInput.disabled = false;
       brandListTextarea.disabled = false;
       break;
   }
@@ -126,10 +120,8 @@ function startPolling() {
 startBtn.addEventListener('click', async () => {
   if (pollTimer) { showStatus('已在采集中', 'info'); return; }
 
-  const url = urlInput.value.trim();
   const brandsText = brandListTextarea.value.trim();
 
-  if (!url) { showStatus('请输入目标 URL', 'error'); return; }
   if (!brandsText) { showStatus('请输入品牌列表', 'error'); return; }
 
   const brands = brandsText.split('\n')
@@ -139,7 +131,7 @@ startBtn.addEventListener('click', async () => {
   if (brands.length === 0) { showStatus('品牌列表为空', 'error'); return; }
 
   // 保存设置
-  chrome.storage.local.set({ savedUrl: url, savedBrands: brandsText });
+  chrome.storage.local.set({ savedBrands: brandsText });
 
   // 初始化状态
   const state = {
