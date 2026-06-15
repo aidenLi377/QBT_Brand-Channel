@@ -191,6 +191,7 @@ function ensureCheckboxSelected(labelText) {
 
   console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
 
+  // 任一信号指示已选中 → 跳过
   if (inputChecked) return;
   if (afterContent && afterContent !== 'none') return;
 
@@ -209,8 +210,8 @@ function ensureCheckboxDeselected(labelText) {
 
   console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
 
-  if (!inputChecked) return;
-  if (!afterContent || afterContent === 'none') return;
+  // 两个信号都指示未选中 → 已取消，跳过；否则点击取消
+  if (!inputChecked && (!afterContent || afterContent === 'none')) return;
 
   console.log('[QBT] 点击取消"' + labelText + '"');
   targetLabel.click();
