@@ -11,8 +11,11 @@ const currentBrand = document.getElementById('currentBrand');
 const progressFill = document.getElementById('progressFill');
 const statusMessage = document.getElementById('statusMessage');
 
+const POLL_INTERVAL_MS = 500;
+
 let allResults = [];
 let pollTimer = null;
+let polling = false;
 
 // 恢复上次保存的设置
 chrome.storage.local.get(['savedUrl', 'savedBrands', 'scraperState'], (data) => {
@@ -89,7 +92,10 @@ function updateProgress(progress) {
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
+    if (polling) return;
+    polling = true;
     chrome.storage.local.get(['scraperState'], (data) => {
+      polling = false;
       const state = data.scraperState;
       if (!state) return;
       if (state.status === 'running') {
@@ -114,10 +120,12 @@ function startPolling() {
         showStatus(state.error || '采集出错', 'error');
       }
     });
-  }, 500);
+  }, POLL_INTERVAL_MS);
 }
 
 startBtn.addEventListener('click', async () => {
+  if (pollTimer) { showStatus('已在采集中', 'info'); return; }
+
   const url = urlInput.value.trim();
   const brandsText = brandListTextarea.value.trim();
 
@@ -169,10 +177,14 @@ stopBtn.addEventListener('click', async () => {
   chrome.storage.local.set({
     scraperState: { status: 'stopped', completed: 0, total: 0, current: '', results: allResults }
   });
+  updateUI('stopped');
+  showStatus('正在停止...', 'info');
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     chrome.tabs.sendMessage(tab.id, { action: 'stopScraping' });
-  } catch (err) { /* ignore */ }
+  } catch (err) {
+    console.warn('停止消息发送失败:', err.message);
+  }
 });
 
 exportBtn.addEventListener('click', () => {
