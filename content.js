@@ -8,12 +8,12 @@ let stopFlag = false;
   if (state && state.pendingTask) {
     stopFlag = state.pendingTask.stopFlag || false;
     updateBadge(state.completed || 0, state.total || 0);
-    // 等待一键复制按钮出现
-    const btnReady = await waitForCopyButton(15000);
-    if (!btnReady) {
-      console.warn('[QBT] 页面加载后未检测到一键复制按钮，2秒后重试...');
+    // 等待结果表格出现
+    const ready = await waitForResultTable(15000);
+    if (!ready) {
+      console.warn('[QBT] 页面加载后未检测到结果表格，2秒后重试...');
       await sleep(2000);
-      await waitForCopyButton(10000);
+      await waitForResultTable(10000);
     }
     await resumeAfterReload(state.pendingTask);
   }
@@ -22,8 +22,9 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 通过一键复制按钮获取数据
-  const data = await copyAndParseData();
+  // 直接从 DOM 获取表格数据（innerText → TSV）
+  const tsv = getTableData();
+  const data = parseTSV(tsv);
   let results = task.results || [];
 
   if (data && data.length > 0) {
@@ -219,14 +220,14 @@ function clickSearch() {
   else console.warn('[QBT] 未找到检索按钮');
 }
 
-// === 等待一键复制按钮出现 ===
-function waitForCopyButton(timeout = 15000) {
+// === 等待结果表格出现 ===
+function waitForResultTable(timeout = 15000) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const check = () => {
       if (Date.now() - startTime > timeout) { resolve(false); return; }
-      const btn = getCopyButton();
-      if (btn) { console.log('[QBT] 一键复制按钮已出现'); resolve(true); return; }
+      const tsv = getTableData();
+      if (tsv && tsv.trim().length > 0) { console.log('[QBT] 结果表格已出现'); resolve(true); return; }
       setTimeout(check, 500);
     };
     check();
@@ -237,99 +238,40 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-function getCopyButton() {
-  return getElementByXPath(
+// === 直接从 DOM 获取表格数据（类似影刀 RPA 的思路） ===
+// table.innerText 自动生成 TSV 格式，跟复制出来的数据一模一样，无需剪贴板
+function getTableData() {
+  // 用一键复制按钮的位置反向定位结果表格
+  const copyBtn = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]/div[1]/div[1]/button'
   );
-}
+  if (!copyBtn) { console.warn('[QBT] 未找到结果表格'); return ''; }
 
-// === 通过一键复制获取并解析数据 ===
-// 使用 chrome.scripting.executeScript + world: 'MAIN' 注入到页面主世界
-// （CSP 阻止内联 <script>，只能用这个官方 API）
-function copyAndParseData() {
-  return new Promise(async (resolve) => {
-    const btn = getCopyButton();
-    if (!btn) {
-      console.warn('[QBT] 未找到一键复制按钮');
-      resolve([]);
-      return;
-    }
+  // 从按钮向上找到表格所在区域，再向下找 table
+  const resultArea = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]'
+  );
+  if (!resultArea) { console.warn('[QBT] 未找到结果区域'); return ''; }
 
-    let resolved = false;
-    let capturedText = null;
+  // div[2] 区域下找表格
+  const tableArea = resultArea.querySelector('div:nth-child(2)');
+  if (!tableArea) { console.warn('[QBT] 未找到表格区域'); return ''; }
 
-    // 监听来自页面主世界的 postMessage
-    const msgHandler = (e) => {
-      if (e.data && e.data.type === 'QBT_CLIPBOARD_DATA') {
-        capturedText = e.data.text;
-        console.log('[QBT] 收到页面数据, 长度:', capturedText ? capturedText.length : 0);
-      }
-    };
-    window.addEventListener('message', msgHandler);
-
-    // 获取 tabId 并注入到页面主世界
-    try {
-      const tabId = await getTabId();
-      if (tabId) {
-        await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          world: 'MAIN',
-          func: interceptClipboardInMainWorld
-        });
-        console.log('[QBT] 已注入剪贴板拦截到主世界');
-      }
-    } catch (e) {
-      console.warn('[QBT] executeScript 注入失败:', e.message);
-    }
-
-    // 点击一键复制按钮
-    btn.focus();
-    btn.click();
-
-    // 等待数据回传
-    setTimeout(() => {
-      window.removeEventListener('message', msgHandler);
-      if (resolved) return;
-      resolved = true;
-
-      if (capturedText) {
-        console.log('[QBT] 成功捕获数据');
-        resolve(parseTSV(capturedText));
-      } else {
-        console.warn('[QBT] 未能捕获剪贴板数据');
-        resolve([]);
-      }
-    }, 2000);
-  });
-}
-
-// 此函数被序列化后注入到页面主世界执行，不能引用外部变量
-function interceptClipboardInMainWorld() {
-  if (window.__qbt_patched) return;
-  window.__qbt_patched = true;
-
-  var _write = navigator.clipboard.write.bind(navigator.clipboard);
-  navigator.clipboard.write = function (items) {
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      if (item.types.indexOf('text/plain') !== -1) {
-        item.getType('text/plain').then(function (blob) {
-          return blob.text();
-        }).then(function (text) {
-          window.postMessage({ type: 'QBT_CLIPBOARD_DATA', text: text }, '*');
-        }).catch(function () { });
+  const table = tableArea.querySelector('table');
+  if (!table) {
+    // 回退：全局搜索
+    const allTables = resultArea.querySelectorAll('table');
+    for (const t of allTables) {
+      if (t.querySelector('tbody tr') && t.innerText.trim().length > 0) {
+        return t.innerText;
       }
     }
-    return Promise.resolve();
-  };
-}
+    console.warn('[QBT] 未找到数据表格');
+    return '';
+  }
 
-function getTabId() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'getTabId' }, (response) => {
-      resolve(response ? response.tabId : null);
-    });
-  });
+  console.log('[QBT] 找到表格, innerText 长度:', table.innerText.length);
+  return table.innerText;
 }
 
 // === 解析 TSV 数据 ===
