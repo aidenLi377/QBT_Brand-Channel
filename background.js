@@ -20,6 +20,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'openWindow') {
+    chrome.windows.create({
+      url: 'popup.html?standalone=1',
+      type: 'popup',
+      width: 420,
+      height: 480,
+      focused: true
+    });
+    // 关闭原来的弹窗（通过关闭当前弹出的 action popup）
+    // 这不会自动关闭，但用户看到新窗口后可以手动关闭弹窗
+    return true;
+  }
+
   if (message.type === 'updateBadge') {
     if (message.text) {
       chrome.action.setBadgeText({ text: message.text });

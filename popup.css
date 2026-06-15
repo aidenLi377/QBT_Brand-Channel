@@ -85,6 +85,28 @@ body {
   text-transform: uppercase;
 }
 
+.pin-btn {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--border-dim);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.pin-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.pin-btn svg { width: 14px; height: 14px; }
+
 /* === Section === */
 .section { margin-bottom: 15px; }
 

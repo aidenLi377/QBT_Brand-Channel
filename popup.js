@@ -1,5 +1,6 @@
 // popup.js — 弹窗逻辑
 
+const pinBtn = document.getElementById('pinBtn');
 const brandListTextarea = document.getElementById('brandList');
 const brandCount = document.getElementById('brandCount');
 const clearBtn = document.getElementById('clearBtn');
@@ -124,6 +125,16 @@ function startPolling() {
     });
   }, POLL_INTERVAL_MS);
 }
+
+// 独立窗口模式：隐藏 pin 按钮（窗口已有原生控件）
+if (new URLSearchParams(location.search).has('standalone')) {
+  pinBtn.classList.add('hidden');
+}
+
+// 固定按钮 → 打开独立窗口
+pinBtn.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'openWindow' });
+});
 
 startBtn.addEventListener('click', async () => {
   if (pollTimer) { showStatus('已在采集中', 'info'); return; }
