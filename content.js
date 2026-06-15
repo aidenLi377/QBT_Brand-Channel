@@ -28,7 +28,8 @@ async function resumeAfterReload(task) {
   let results = task.results || [];
 
   if (data && data.length > 0) {
-    data.forEach(row => results.push({ channel: task.channel, brand: task.brand, ...row }));
+    const channelLabel = task.channel === 'all' ? '全部' : '淘宝全部';
+    data.forEach(row => results.push({ channel: channelLabel, brand: task.brand, ...row }));
     console.log('[QBT] 成功解析', data.length, '行数据, 累计:', results.length);
   } else {
     console.warn('[QBT] 未解析到数据，继续下一步');
