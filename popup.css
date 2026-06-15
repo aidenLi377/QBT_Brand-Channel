@@ -88,9 +88,11 @@ body {
 
 .btn-danger { background: #ef4444; color: #fff; }
 .btn-danger:hover { background: #dc2626; }
+.btn-danger:disabled { background: #fca5a5; cursor: not-allowed; }
 
 .btn-success { background: #10b981; color: #fff; }
 .btn-success:hover { background: #059669; }
+.btn-success:disabled { background: #6ee7b7; cursor: not-allowed; }
 
 .status-message {
   margin-top: 12px;
