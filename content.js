@@ -7,15 +7,14 @@ let stopFlag = false;
   const state = await getState();
   if (state && state.pendingTask) {
     stopFlag = state.pendingTask.stopFlag || false;
-    // 等待表格加载完成
-    const tableReady = await waitForTable(15000);
-    if (!tableReady) {
-      console.warn('[QBT] 页面加载后未检测到结果表格，2秒后重试...');
+    // 等待一键复制按钮出现
+    const btnReady = await waitForCopyButton(15000);
+    if (!btnReady) {
+      console.warn('[QBT] 页面加载后未检测到一键复制按钮，2秒后重试...');
       await sleep(2000);
-      const retry = await waitForTable(10000);
+      const retry = await waitForCopyButton(10000);
       if (!retry) {
-        console.error('[QBT] 表格加载超时，跳过当前步骤');
-        // 仍尝试解析（可能表格结构不同）
+        console.error('[QBT] 一键复制按钮加载超时');
       }
     }
     await resumeAfterReload(state.pendingTask);
@@ -25,8 +24,8 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 页面刚跳转回来，解析当前表格
-  const data = parseTable();
+  // 通过一键复制按钮获取数据
+  const data = await copyAndParseData();
   let results = task.results || [];
 
   if (data && data.length > 0) {
@@ -232,18 +231,14 @@ function clickSearch() {
   else console.warn('[QBT] 未找到检索按钮');
 }
 
-// === 等待表格出现 ===
-function waitForTable(timeout = 15000) {
+// === 等待一键复制按钮出现 ===
+function waitForCopyButton(timeout = 15000) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const check = () => {
       if (Date.now() - startTime > timeout) { resolve(false); return; }
-      const table = findResultTable();
-      if (table) {
-        const tbody = table.querySelector('tbody');
-        const rows = tbody ? tbody.querySelectorAll('tr') : [];
-        if (rows.length >= 2) { resolve(true); return; }
-      }
+      const btn = getCopyButton();
+      if (btn) { resolve(true); return; }
       setTimeout(check, 500);
     };
     check();
@@ -254,93 +249,118 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// === 查找结果表格（多种策略） ===
-function findResultTable() {
-  // 策略1: 用户提供的 XPath 到 colgroup
-  let colgroup = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]/div[2]/div[3]/div[1]/div[1]/div[1]/div[2]/div/table/colgroup'
+function getCopyButton() {
+  return getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]/div[1]/div[1]/button'
   );
-  if (colgroup) return colgroup.closest('table');
-
-  // 策略2: 简化 XPath（div[5] 区域下的第一个 table）
-  const area = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
-  );
-  if (area) {
-    const tables = area.querySelectorAll('table');
-    for (const t of tables) {
-      const rows = t.querySelectorAll('tbody tr');
-      if (rows.length >= 2) return t;
-    }
-  }
-
-  // 策略3: 全局搜索包含 colgroup 且有 tbody 的 table
-  const allTables = document.querySelectorAll('table');
-  for (const t of allTables) {
-    if (t.querySelector('colgroup') && t.querySelector('tbody tr')) {
-      return t;
-    }
-  }
-
-  return null;
 }
 
-// === 表格解析 ===
-function parseTable() {
-  const table = findResultTable();
-  if (!table) { console.warn('[QBT] 未找到结果表格'); return []; }
+// === 通过一键复制获取并解析数据 ===
+function copyAndParseData() {
+  return new Promise((resolve) => {
+    const btn = getCopyButton();
+    if (!btn) {
+      console.warn('[QBT] 未找到一键复制按钮');
+      resolve([]);
+      return;
+    }
 
-  const tbody = table.querySelector('tbody');
-  if (!tbody) { console.warn('[QBT] 表格无 tbody'); return []; }
+    let resolved = false;
 
-  const allRows = Array.from(tbody.querySelectorAll('tr'));
-  console.log('[QBT] 表格共', allRows.length, '行');
+    // 拦截 copy 事件获取数据
+    const copyHandler = (e) => {
+      if (resolved) return;
+      const tsv = e.clipboardData.getData('text/plain');
+      e.preventDefault(); // 阻止写入系统剪贴板（可选，保持干净）
+      e.stopImmediatePropagation();
+      document.removeEventListener('copy', copyHandler, true);
+      resolved = true;
+      resolve(parseTSV(tsv));
+    };
 
-  if (allRows.length < 2) { console.warn('[QBT] 表格行数不足'); return []; }
+    document.addEventListener('copy', copyHandler, true);
 
-  // 实际表格结构（4行，取第1行和第3行）：
-  // Row 0: 表头行 — 类别名称 | 月份1 | 月份2 | ... | 总计
-  // Row 1: 跳过（暂无数据 或 销量子表头）
-  // Row 2: 数据行 — 0-∞元 | 数值1 | 数值2 | ... | 总计
-  // Row 3: 总计行 — 跳过
+    // 点击按钮
+    btn.click();
 
-  // 取第1行 (index 0) 和第3行 (index 2)
-  const headerRow = allRows[0];
-  let dataRow = allRows.length >= 3 ? allRows[2] : null;
+    // 超时保护
+    setTimeout(() => {
+      if (!resolved) {
+        document.removeEventListener('copy', copyHandler, true);
+        resolved = true;
+        console.warn('[QBT] 一键复制超时');
+        resolve([]);
+      }
+    }, 5000);
+  });
+}
 
-  // 如果只有2-3行，尝试取最后一行非总计的行作为数据行
-  if (!dataRow && allRows.length >= 2) {
-    dataRow = allRows[1];
+// === 解析 TSV 数据 ===
+// 复制的数据格式（制表符分隔）：
+// Row 0: 类别名称\t202601\t202602\t...\t总计
+// Row 1: 销售额\t销售额\t销售额\t...\t销售额     ← 跳过
+// Row 2: 0-∞元\t79339027\t60920183\t...\t...  ← 数据行
+// Row 3: 总计\t...                              ← 跳过
+function parseTSV(tsvText) {
+  console.log('[QBT] 原始复制数据:\n', tsvText);
+
+  if (!tsvText || tsvText.trim().length === 0) {
+    console.warn('[QBT] 复制数据为空');
+    return [];
   }
 
-  if (!headerRow || !dataRow) { console.warn('[QBT] 无法定位表头行或数据行'); return []; }
+  // 按换行分割
+  const lines = tsvText.split(/\r?\n/).filter(line => line.trim().length > 0);
+  console.log('[QBT] 共', lines.length, '行');
 
-  // 从表头行提取月份列名
-  const headerCells = Array.from(headerRow.querySelectorAll('th, td'));
-  // 去掉第一列（类别名称）和最后一列（总计）
-  const monthHeaders = headerCells.slice(1, -1).map(cell => cell.textContent.trim());
+  if (lines.length < 2) {
+    console.warn('[QBT] 数据行数不足');
+    return [];
+  }
+
+  // 将每行按制表符分割
+  const rows = lines.map(line => line.split('\t'));
+
+  // 移除第2行（index 1，销售额子表头）
+  // 移除最后一行（总计）
+  // 同时移除每行最后一列（总计列）
+  const processedRows = [];
+  for (let i = 0; i < rows.length; i++) {
+    // 跳过 Row 1（销售额子表头）和最后一行（总计）
+    if (i === 1 || i === rows.length - 1) continue;
+    // 去掉最后一列
+    processedRows.push(rows[i].slice(0, -1));
+  }
+
+  if (processedRows.length < 2) {
+    console.warn('[QBT] 处理后数据行数不足');
+    return [];
+  }
+
+  // 第一行是表头（类别名称 + 月份列）
+  const headerRow = processedRows[0];
+  const monthHeaders = headerRow.slice(1); // 跳过"类别名称"列
   console.log('[QBT] 月份列:', monthHeaders);
 
-  // 从数据行提取数值
-  const dataCells = Array.from(dataRow.querySelectorAll('td'));
-
-  // 去掉最后一列（总计）
-  const valueCells = dataCells.slice(0, -1);
-
-  if (valueCells.length === 0) { console.warn('[QBT] 数据行无单元格'); return []; }
-
-  // 第一列是类别占位（0-∞元），替换为面包屑类目名称
+  // 从面包屑获取真实类目名称
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
-  const rowData = { category: categoryName };
-  monthHeaders.forEach((header, idx) => {
-    const cell = valueCells[idx + 1];
-    rowData[header] = cell ? cell.textContent.trim() : '';
-  });
+  // 后续行是数据行
+  const results = [];
+  for (let i = 1; i < processedRows.length; i++) {
+    const dataRow = processedRows[i];
+    const rowData = { category: categoryName };
 
-  console.log('[QBT] 解析结果:', rowData);
-  return [rowData];
+    monthHeaders.forEach((header, idx) => {
+      rowData[header] = (dataRow[idx + 1] || '').trim();
+    });
+
+    results.push(rowData);
+  }
+
+  console.log('[QBT] 解析结果:', results);
+  return results;
 }
 
 // === 从面包屑获取类目名称 ===
