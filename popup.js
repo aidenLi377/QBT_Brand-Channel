@@ -1,6 +1,8 @@
 // popup.js — 弹窗逻辑
 
 const brandListTextarea = document.getElementById('brandList');
+const brandCount = document.getElementById('brandCount');
+const clearBtn = document.getElementById('clearBtn');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const exportBtn = document.getElementById('exportBtn');
@@ -18,7 +20,7 @@ let polling = false;
 
 // 恢复上次保存的设置
 chrome.storage.local.get(['savedBrands', 'scraperState'], (data) => {
-  if (data.savedBrands) brandListTextarea.value = data.savedBrands;
+  if (data.savedBrands) { brandListTextarea.value = data.savedBrands; updateBrandCount(); }
   if (data.scraperState && data.scraperState.status === 'running') {
     updateUI('running');
     startPolling();
@@ -125,14 +127,47 @@ function startPolling() {
 
 startBtn.addEventListener('click', async () => {
   if (pollTimer) { showStatus('已在采集中', 'info'); return; }
+  startScraping();
+});
+
+// Enter 开始采集，Ctrl+Enter 开始采集
+brandListTextarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    startScraping();
+  }
+});
+
+// 实时显示品牌数
+brandListTextarea.addEventListener('input', updateBrandCount);
+
+// 一键清空
+clearBtn.addEventListener('click', () => {
+  brandListTextarea.value = '';
+  updateBrandCount();
+  brandListTextarea.focus();
+});
+
+function parseBrands(text) {
+  return text.split(/[\n\t]/)
+    .map(b => b.trim())
+    .filter(b => b.length > 0);
+}
+
+function updateBrandCount() {
+  const brands = parseBrands(brandListTextarea.value);
+  brandCount.textContent = brands.length > 0 ? brands.length + ' 个品牌' : '';
+  clearBtn.classList.toggle('visible', brandListTextarea.value.length > 0);
+}
+
+async function startScraping() {
+  if (pollTimer) { showStatus('已在采集中', 'info'); return; }
 
   const brandsText = brandListTextarea.value.trim();
 
   if (!brandsText) { showStatus('请输入品牌列表', 'error'); return; }
 
-  const brands = brandsText.split('\n')
-    .map(b => b.trim())
-    .filter(b => b.length > 0);
+  const brands = parseBrands(brandsText);
 
   if (brands.length === 0) { showStatus('品牌列表为空', 'error'); return; }
 

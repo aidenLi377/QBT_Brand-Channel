@@ -95,7 +95,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: #374151;
-  margin-bottom: 7px;
+  margin-bottom: 0;
 }
 
 .label-dot {
@@ -106,7 +106,48 @@ body {
   flex-shrink: 0;
 }
 
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.brand-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6366f1;
+  background: #eef2ff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
 /* === Textarea === */
+.textarea-wrapper {
+  position: relative;
+}
+
+.clear-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: #e5e7eb;
+  color: #6b7280;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: all 0.15s;
+}
+.clear-btn.visible { display: flex; }
+.clear-btn:hover { background: #d1d5db; color: #374151; }
 .textarea {
   width: 100%;
   padding: 10px 12px;

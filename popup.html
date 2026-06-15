@@ -23,9 +23,15 @@
     </div>
 
     <div class="section">
-      <label class="label" for="brandList"><span class="label-dot"></span>品牌列表</label>
-      <textarea id="brandList" class="textarea" rows="8"
-                placeholder="一行一个品牌，例如：&#10;兰蔻&#10;雅诗兰黛&#10;HR/赫莲娜"></textarea>
+      <div class="label-row">
+        <label class="label" for="brandList"><span class="label-dot"></span>品牌列表</label>
+        <span class="brand-count" id="brandCount"></span>
+      </div>
+      <div class="textarea-wrapper">
+        <textarea id="brandList" class="textarea" rows="7"
+                  placeholder="一行一个品牌，支持 Excel 直接粘贴&#10;按 Enter 开始采集 · Shift+Enter 换行"></textarea>
+        <button class="clear-btn" id="clearBtn" title="清空">×</button>
+      </div>
     </div>
 
     <div id="progressSection" class="section hidden">
