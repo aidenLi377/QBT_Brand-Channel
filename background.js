@@ -15,6 +15,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'getTabId') {
+    sendResponse({ tabId: sender.tab ? sender.tab.id : null });
+    return true;
+  }
+
   if (message.type === 'updateBadge') {
     if (message.text) {
       chrome.action.setBadgeText({ text: message.text });

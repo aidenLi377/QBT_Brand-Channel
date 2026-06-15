@@ -244,10 +244,10 @@ function getCopyButton() {
 }
 
 // === 通过一键复制获取并解析数据 ===
-// 关键：注入 <script> 到页面主世界拦截 clipboard.write，
-// 因为 content script 的隔离世界中 navigator.clipboard 和页面的是两个不同对象
+// 使用 chrome.scripting.executeScript + world: 'MAIN' 注入到页面主世界
+// （CSP 阻止内联 <script>，只能用这个官方 API）
 function copyAndParseData() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const btn = getCopyButton();
     if (!btn) {
       console.warn('[QBT] 未找到一键复制按钮');
@@ -267,8 +267,20 @@ function copyAndParseData() {
     };
     window.addEventListener('message', msgHandler);
 
-    // 注入脚本到页面主世界——拦截 navigator.clipboard.write
-    injectPageScript();
+    // 获取 tabId 并注入到页面主世界
+    try {
+      const tabId = await getTabId();
+      if (tabId) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          world: 'MAIN',
+          func: interceptClipboardInMainWorld
+        });
+        console.log('[QBT] 已注入剪贴板拦截到主世界');
+      }
+    } catch (e) {
+      console.warn('[QBT] executeScript 注入失败:', e.message);
+    }
 
     // 点击一键复制按钮
     btn.focus();
@@ -291,38 +303,33 @@ function copyAndParseData() {
   });
 }
 
-// 注入脚本到页面主世界
-function injectPageScript() {
-  // 先移除旧的
-  const old = document.getElementById('qbt-intercept');
-  if (old) old.remove();
+// 此函数被序列化后注入到页面主世界执行，不能引用外部变量
+function interceptClipboardInMainWorld() {
+  if (window.__qbt_patched) return;
+  window.__qbt_patched = true;
 
-  const script = document.createElement('script');
-  script.id = 'qbt-intercept';
-  script.textContent = `
-    (function() {
-      if (window.__qbt_patched) return;
-      window.__qbt_patched = true;
+  var _write = navigator.clipboard.write.bind(navigator.clipboard);
+  navigator.clipboard.write = function (items) {
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.types.indexOf('text/plain') !== -1) {
+        item.getType('text/plain').then(function (blob) {
+          return blob.text();
+        }).then(function (text) {
+          window.postMessage({ type: 'QBT_CLIPBOARD_DATA', text: text }, '*');
+        }).catch(function () { });
+      }
+    }
+    return Promise.resolve();
+  };
+}
 
-      var _write = navigator.clipboard.write.bind(navigator.clipboard);
-      navigator.clipboard.write = function(items) {
-        var itemsArray = items;
-        for (var i = 0; i < itemsArray.length; i++) {
-          var item = itemsArray[i];
-          if (item.types.indexOf('text/plain') !== -1) {
-            item.getType('text/plain').then(function(blob) {
-              return blob.text();
-            }).then(function(text) {
-              window.postMessage({ type: 'QBT_CLIPBOARD_DATA', text: text }, '*');
-            }).catch(function(){});
-          }
-        }
-        return Promise.resolve();
-      };
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
-  script.remove();
+function getTabId() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'getTabId' }, (response) => {
+      resolve(response ? response.tabId : null);
+    });
+  });
 }
 
 // === 解析 TSV 数据 ===
