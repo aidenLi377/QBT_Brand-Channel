@@ -261,15 +261,7 @@ function waitForResultTable(timeout = 15000) {
     const startTime = Date.now();
     const check = () => {
       if (Date.now() - startTime > timeout) { resolve(false); return; }
-      // 检查页面中是否存在包含"0-∞元"的表格
-      const allTables = document.querySelectorAll('table');
-      for (const t of allTables) {
-        if (t.textContent.includes('0-∞元')) {
-          console.log('[QBT] 结果表格已出现（检测到0-∞元）');
-          resolve(true);
-          return;
-        }
-      }
+      if (findBestTable()) { console.log('[QBT] 结果表格已出现'); resolve(true); return; }
       setTimeout(check, 500);
     };
     check();
@@ -280,43 +272,39 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// === 从 DOM 获取正确的数据表格（按内容特征"0-∞元"定位） ===
-// 页面上可能有多个表（销量/销售额/同比），只有含"0-∞元"的是价格段数据表
-function getTableData() {
+// === 从 DOM 获取数据表格（影刀思路：按数据密度评分找表） ===
+// 评分标准：表格中含有 N 个看起来像金额的单元格（数字+可选小数点）
+function findBestTable() {
   const allTables = document.querySelectorAll('table');
+  let bestTable = null;
+  let bestScore = 0;
 
-  // 策略1: 找到包含"0-∞元"的表格（价格段数据表的特征）
   for (const t of allTables) {
-    if (t.textContent.includes('0-∞元')) {
-      console.log('[QBT] 通过"0-∞元"定位到数据表');
-      return buildTSV(t);
+    const cells = t.querySelectorAll('td');
+    let score = 0;
+    for (const c of cells) {
+      const text = c.textContent.trim();
+      // 匹配金额格式：纯数字（可能含逗号和小数点），且长度>4（排除年份）
+      if (/^[\d,]+\.?\d*$/.test(text) && text.replace(/[,\.]/g, '').length > 4) {
+        score++;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestTable = t;
     }
   }
 
-  // 策略2: 找包含"销售额"的表格
-  for (const t of allTables) {
-    if (t.textContent.includes('销售额')) {
-      console.log('[QBT] 通过"销售额"定位到数据表');
-      return buildTSV(t);
-    }
+  if (bestTable) {
+    console.log('[QBT] 数据表评分:', bestScore, '个金额单元格, 行数:', bestTable.querySelectorAll('tr').length);
   }
+  return bestTable;
+}
 
-  // 策略3: 回退到结果区域最大的表格
-  const resultArea = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
-  );
-  if (resultArea) {
-    const tables = resultArea.querySelectorAll('table');
-    let best = null, max = 0;
-    for (const t of tables) {
-      const n = t.querySelectorAll('td, th').length;
-      if (n > max) { max = n; best = t; }
-    }
-    if (best) { console.log('[QBT] 回退：使用最大表格'); return buildTSV(best); }
-  }
-
-  console.warn('[QBT] 未找到数据表格');
-  return '';
+function getTableData() {
+  const table = findBestTable();
+  if (!table) { console.warn('[QBT] 未找到数据表格'); return ''; }
+  return buildTSV(table);
 }
 
 function buildTSV(table) {
