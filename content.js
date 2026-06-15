@@ -345,15 +345,22 @@ function parseTableDOM(table) {
   // Row 2: 数据行
   const dataCells = Array.from(trs[2].querySelectorAll('td'));
 
+  // 检测数据行偏移：第一列通常是"0-∞元"之类的类别占位
+  // 子表头从第1列开始（跳过类别列），所以要加偏移
+  const firstCellText = dataCells.length > 0 ? dataCells[0].textContent.trim() : '';
+  const dataOffset = (firstCellText.includes('元') || firstCellText === '') ? 1 : 0;
+  console.log('[QBT] 数据行第一格:', firstCellText, '→ 偏移:', dataOffset);
+  console.log('[QBT] 数据行列数:', dataCells.length, '子表头列数:', subHeaders.length);
+
   // 构建结果：每个销售额值对应一个月份
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
   const rowData = { category: categoryName };
   for (let si = 0; si < salesIndices.length; si++) {
-    const idx = salesIndices[si];
+    const idx = salesIndices[si] + dataOffset;
     const month = (si < monthRanges.length) ? monthRanges[si].month : ('col' + idx);
-    rowData[month] = dataCells[idx] ? dataCells[idx].textContent.trim() : '';
+    rowData[month] = (idx < dataCells.length && dataCells[idx]) ? dataCells[idx].textContent.trim() : '';
   }
 
   console.log('[QBT] 解析结果:', rowData);
