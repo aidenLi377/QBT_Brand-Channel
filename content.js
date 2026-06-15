@@ -161,8 +161,22 @@ function inputBrandName(brand) {
 }
 
 // === 复选框操作 ===
+// "全部" 和 "淘宝全部" 用精确 XPath 定位（页面上可能有多个同名元素）
+const CHECKBOX_XPATHS = {
+  '全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[1]/label',
+  '淘宝全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[2]/label'
+};
+
+function getCheckboxLabel(labelText) {
+  if (CHECKBOX_XPATHS[labelText]) {
+    const el = getElementByXPath(CHECKBOX_XPATHS[labelText]);
+    if (el) return el;
+  }
+  return findLabelByText(labelText);
+}
+
 function ensureCheckboxSelected(labelText) {
-  const targetLabel = findLabelByText(labelText);
+  const targetLabel = getCheckboxLabel(labelText);
   if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
@@ -171,11 +185,12 @@ function ensureCheckboxSelected(labelText) {
   const afterStyle = window.getComputedStyle(targetLabel, '::after');
   if (afterStyle && afterStyle.content && afterStyle.content !== 'none') return;
 
+  console.log('[QBT] 点击选中"' + labelText + '"');
   targetLabel.click();
 }
 
 function ensureCheckboxDeselected(labelText) {
-  const targetLabel = findLabelByText(labelText);
+  const targetLabel = getCheckboxLabel(labelText);
   if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
   const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
@@ -184,6 +199,7 @@ function ensureCheckboxDeselected(labelText) {
   const afterStyle = window.getComputedStyle(targetLabel, '::after');
   if (!afterStyle || !afterStyle.content || afterStyle.content === 'none') return;
 
+  console.log('[QBT] 点击取消"' + labelText + '"');
   targetLabel.click();
 }
 
@@ -356,11 +372,13 @@ function parseTableDOM(table) {
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
+  // 只取月份数量的销售额值（排除总计列的"销售额"）
+  const count = Math.min(salesIndices.length, monthRanges.length);
+
   const rowData = { category: categoryName };
-  for (let si = 0; si < salesIndices.length; si++) {
+  for (let si = 0; si < count; si++) {
     const idx = salesIndices[si] + dataOffset;
-    const month = (si < monthRanges.length) ? monthRanges[si].month : ('col' + idx);
-    rowData[month] = (idx < dataCells.length && dataCells[idx]) ? dataCells[idx].textContent.trim() : '';
+    rowData[monthRanges[si].month] = (idx < dataCells.length && dataCells[idx]) ? dataCells[idx].textContent.trim() : '';
   }
 
   console.log('[QBT] 解析结果:', rowData);
