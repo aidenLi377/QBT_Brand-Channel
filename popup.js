@@ -193,12 +193,11 @@ exportBtn.addEventListener('click', () => {
   const sortedMonths = Array.from(monthKeys).sort();
 
   // 构建 CSV
-  const headers = ['渠道', '品牌名称', '类别名称', ...sortedMonths];
+  const headers = ['渠道', '品牌名称', ...sortedMonths];
   const rows = allResults.map(r => {
     const cells = [
       r.channel,
       r.brand,
-      r.category,
       ...sortedMonths.map(m => r[m] || '')
     ];
     return cells.map(c => {

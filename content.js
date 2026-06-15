@@ -34,6 +34,23 @@ async function resumeAfterReload(task) {
     console.warn('[QBT] 未解析到数据，继续下一步');
   }
 
+  // taobao 渠道完成后，计算天猫 = all - taobao
+  if (task.channel === 'taobao') {
+    const allEntry = results.find(r => r.channel === '全部' && r.brand === task.brand);
+    const taobaoEntry = results.find(r => r.channel === '淘宝全部' && r.brand === task.brand);
+    if (allEntry && taobaoEntry) {
+      const tianmaoEntry = { channel: '天猫', brand: task.brand };
+      const monthKeys = Object.keys(allEntry).filter(k => k !== 'channel' && k !== 'brand' && k !== 'category');
+      for (const key of monthKeys) {
+        const allVal = parseFloat(String(allEntry[key]).replace(/,/g, '')) || 0;
+        const tmallVal = parseFloat(String(taobaoEntry[key]).replace(/,/g, '')) || 0;
+        tianmaoEntry[key] = String(allVal - tmallVal);
+      }
+      results.push(tianmaoEntry);
+      console.log('[QBT] 已计算天猫行:', tianmaoEntry);
+    }
+  }
+
   // 判断下一步
   let nextChannel, nextBrandIdx;
 
