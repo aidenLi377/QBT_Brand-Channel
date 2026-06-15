@@ -75,7 +75,7 @@ function showStatus(message, type) {
 function updateProgress(progress) {
   const pct = progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0;
   progressText.textContent = `${progress.completed} / ${progress.total}`;
-  currentBrand.textContent = progress.current || '';
+  currentBrand.textContent = (progress.current || '') + (progress.currentChannel ? ' · ' + progress.currentChannel : '');
   progressFill.style.width = pct + '%';
   // Update ARIA attributes
   const progressBar = progressFill.parentElement;
@@ -100,7 +100,13 @@ function startPolling() {
         allResults = state.results || [];
         updateProgress(state);
         updateUI('done');
-        showStatus(`采集完成 • ${allResults.length} 条数据`, 'success');
+        const errors = state.errors || [];
+        if (errors.length > 0) {
+          const errorBrands = [...new Set(errors.map(e => e.brand))].join('、');
+          showStatus(`完成 • ${allResults.length} 条数据 | ⚠ ${errorBrands} 无数据`, 'error');
+        } else {
+          showStatus(`采集完成 • ${allResults.length} 条数据`, 'success');
+        }
       } else if (state.status === 'stopped') {
         clearInterval(pollTimer);
         pollTimer = null;
@@ -214,7 +220,8 @@ exportBtn.addEventListener('click', () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'qbt_data_' + new Date().toISOString().slice(0, 10) + '.csv';
+  const brandCount = new Set(allResults.map(r => r.brand)).size;
+  a.download = 'QBT_' + new Date().toISOString().slice(0, 10) + '_' + brandCount + 'brands.csv';
   a.click();
   URL.revokeObjectURL(url);
 

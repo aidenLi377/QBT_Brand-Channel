@@ -27,12 +27,18 @@ async function resumeAfterReload(task) {
   const data = table ? parseTableDOM(table) : [];
   let results = task.results || [];
 
+  const channelLabel = task.channel === 'all' ? '全部' : '淘宝全部';
+  let errors = task.errors || [];
+
   if (data && data.length > 0) {
-    const channelLabel = task.channel === 'all' ? '全部' : '淘宝全部';
     data.forEach(row => results.push({ channel: channelLabel, brand: task.brand, ...row }));
     console.log('[QBT] 成功解析', data.length, '行数据, 累计:', results.length);
   } else {
-    console.warn('[QBT] 未解析到数据，继续下一步');
+    console.warn('[QBT] 未解析到数据');
+    // 去重记录
+    if (!errors.find(e => e.brand === task.brand && e.channel === channelLabel)) {
+      errors.push({ brand: task.brand, channel: channelLabel });
+    }
   }
 
   // taobao 渠道完成后，计算天猫 = all - taobao
@@ -70,7 +76,9 @@ async function resumeAfterReload(task) {
       completed: task.totalBrands,
       total: task.totalBrands,
       current: '',
+      currentChannel: '',
       results: results,
+      errors: errors,
       pendingTask: null
     });
     updateBadge(task.totalBrands, task.totalBrands);
@@ -79,6 +87,8 @@ async function resumeAfterReload(task) {
 
   const nextBrand = task.brands[nextBrandIdx];
 
+  const nextChannelLabel = nextChannel === 'all' ? '全部' : '淘宝全部';
+
   const newPendingTask = {
     brand: nextBrand,
     channel: nextChannel,
@@ -86,6 +96,7 @@ async function resumeAfterReload(task) {
     brands: task.brands,
     totalBrands: task.totalBrands,
     results: results,
+    errors: errors,
     stopFlag: stopFlag
   };
 
@@ -93,7 +104,9 @@ async function resumeAfterReload(task) {
     completed: nextBrandIdx,
     total: task.totalBrands,
     current: nextBrand,
+    currentChannel: nextChannelLabel,
     results: results,
+    errors: errors,
     pendingTask: newPendingTask
   });
   updateBadge(nextBrandIdx, task.totalBrands);
@@ -125,12 +138,10 @@ async function startNewScraping(brands) {
     completed: 0,
     total: brands.length,
     current: brand,
+    currentChannel: '全部',
     results: [],
-    brands: brands
-  });
-
-  // 设置 pendingTask（startNewScraping 是第一次，没有 resumeAfterReload）
-  updateState({
+    errors: [],
+    brands: brands,
     pendingTask: {
       brand: brand,
       channel: 'all',
@@ -138,6 +149,7 @@ async function startNewScraping(brands) {
       brands: brands,
       totalBrands: brands.length,
       results: [],
+      errors: [],
       stopFlag: false
     }
   });
