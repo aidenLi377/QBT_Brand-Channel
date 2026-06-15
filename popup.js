@@ -74,7 +74,7 @@ function showStatus(message, type) {
 
 function updateProgress(progress) {
   const pct = progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0;
-  progressText.textContent = `进度: ${progress.completed}/${progress.total}`;
+  progressText.textContent = `${progress.completed} / ${progress.total}`;
   currentBrand.textContent = progress.current || '';
   progressFill.style.width = pct + '%';
   // Update ARIA attributes
@@ -100,7 +100,7 @@ function startPolling() {
         allResults = state.results || [];
         updateProgress(state);
         updateUI('done');
-        showStatus(`采集完成！共 ${allResults.length} 条数据`, 'success');
+        showStatus(`采集完成 • ${allResults.length} 条数据`, 'success');
       } else if (state.status === 'stopped') {
         clearInterval(pollTimer);
         pollTimer = null;

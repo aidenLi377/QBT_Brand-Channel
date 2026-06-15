@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Icon Generator</title>
+<style>
+  body { font-family: sans-serif; padding: 40px; background: #0d1117; color: #e8ecf2; text-align: center; }
+  canvas { margin: 10px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+  button { padding: 12px 32px; font-size: 15px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; cursor: pointer; margin: 10px; }
+  button:hover { background: #2563eb; }
+  .previews { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin: 20px 0; }
+</style>
+</head>
+<body>
+<h2>QBT Icon Generator</h2>
+<p>点击按钮下载三张 PNG 图标到 icons 目录</p>
+<div class="previews">
+  <div><canvas id="c16" width="16" height="16"></canvas><br>16x16</div>
+  <div><canvas id="c48" width="48" height="48"></canvas><br>48x48</div>
+  <div><canvas id="c128" width="128" height="128"></canvas><br>128x128</div>
+</div>
+<button onclick="downloadAll()">Download All Icons</button>
+<script>
+function drawIcon(canvas) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const m = w * 0.1;
+
+  // Background circle
+  const cx = w / 2, cy = h / 2, r = w / 2 - m;
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, '#1e3a5f');
+  bg.addColorStop(1, '#0f2744');
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = bg;
+  ctx.fill();
+
+  // Subtle ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(96,165,250,0.4)';
+  ctx.lineWidth = w * 0.04;
+  ctx.stroke();
+
+  // Bar chart bars
+  const barW = w * 0.15;
+  const gap = w * 0.06;
+  const baseY = cy + r * 0.55;
+  const maxH = r * 0.9;
+
+  const bars = [
+    { h: 0.55, x: cx - barW * 2 - gap * 1.5 },
+    { h: 0.8,  x: cx - barW - gap * 0.5 },
+    { h: 0.45, x: cx + gap * 0.5 },
+    { h: 0.7,  x: cx + barW + gap * 1.5 },
+  ];
+
+  for (const bar of bars) {
+    const bh = maxH * bar.h;
+    const grad = ctx.createLinearGradient(bar.x, baseY - bh, bar.x, baseY);
+    grad.addColorStop(0, '#93c5fd');
+    grad.addColorStop(0.4, '#60a5fa');
+    grad.addColorStop(1, '#3b82f6');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(bar.x, baseY - bh, barW, bh, w * 0.06);
+    ctx.fill();
+
+    // Top shine
+    const shine = ctx.createLinearGradient(bar.x, baseY - bh, bar.x, baseY - bh + bh * 0.3);
+    shine.addColorStop(0, 'rgba(255,255,255,0.3)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = shine;
+    ctx.beginPath();
+    ctx.roundRect(bar.x, baseY - bh, barW, bh * 0.3, [w * 0.06, w * 0.06, 0, 0]);
+    ctx.fill();
+  }
+}
+
+function downloadAll() {
+  [16, 48, 128].forEach(size => {
+    const c = document.getElementById('c' + size);
+    drawIcon(c);
+    const a = document.createElement('a');
+    a.download = 'icon' + size + '.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+  });
+}
+
+// Draw previews
+drawIcon(document.getElementById('c16'));
+drawIcon(document.getElementById('c48'));
+drawIcon(document.getElementById('c128'));
+</script>
+</body>
+</html>

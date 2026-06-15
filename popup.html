@@ -2,26 +2,39 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>QBT 控盘数据采集</title>
+  <title>QBT 自定义价格段控盘取数</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
-    <h1 class="title">QBT 控盘数据采集</h1>
+    <div class="header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="12" width="3.5" height="10" rx="1" fill="white" opacity="0.9"/>
+          <rect x="7.5" y="6" width="3.5" height="16" rx="1" fill="white" opacity="0.95"/>
+          <rect x="13" y="2" width="3.5" height="20" rx="1" fill="white"/>
+          <rect x="18.5" y="9" width="3.5" height="13" rx="1" fill="white" opacity="0.85"/>
+        </svg>
+      </div>
+      <div class="header-text">
+        <h1 class="title">QBT 自定义价格段控盘取数</h1>
+        <span class="subtitle">Nint Data Scraper</span>
+      </div>
+    </div>
 
     <div class="section">
-      <label class="label" for="brandList">品牌列表（一行一个）</label>
+      <label class="label" for="brandList">品牌列表</label>
       <textarea id="brandList" class="textarea" rows="8"
-                placeholder="品牌A&#10;品牌B&#10;品牌C"></textarea>
+                placeholder="一行一个品牌，例如：&#10;兰蔻&#10;雅诗兰黛&#10;HR/赫莲娜"></textarea>
     </div>
 
     <div id="progressSection" class="section hidden">
       <div class="progress-info">
-        <span id="progressText">进度: 0/0</span>
-        <span id="currentBrand"></span>
+        <span class="progress-text" id="progressText">0 / 0</span>
+        <span class="current-brand" id="currentBrand"></span>
       </div>
-      <div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-        <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+      <div class="progress-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
       </div>
     </div>
 

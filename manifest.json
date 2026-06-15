@@ -1,13 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "QBT 控盘数据采集",
+  "name": "QBT 自定义价格段控盘取数",
   "version": "1.0.0",
-  "description": "自动检索 Nint 品牌数据，支持批量品牌采集并导出 CSV",
+  "description": "Nint 品牌数据自动采集，支持批量检索、多渠道对比、CSV 导出",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://art.nint.com/*"],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "QBT 控盘数据采集"
+    "default_title": "QBT 自定义价格段控盘取数",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "content_scripts": [
     {
