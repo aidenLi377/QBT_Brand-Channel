@@ -22,7 +22,10 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 直接从 DOM 获取表格数据（innerText → TSV）
+  // 确保指标只有"销售额"被选中
+  ensureOnlySalesSelected();
+
+  // 直接从 DOM 获取表格数据（tr/td → TSV）
   const tsv = getTableData();
   const data = parseTSV(tsv);
   let results = task.results || [];
@@ -201,6 +204,41 @@ function ensureSortOrderSelected(labelText) {
   if (afterStyle && afterStyle.content && afterStyle.content !== 'none') return;
 
   targetLabel.click();
+}
+
+// === 指标选择：确保只有"销售额"被选中 ===
+function ensureOnlySalesSelected() {
+  const container = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[1]/div[1]/div/div[1]'
+  );
+  if (!container) { console.warn('[QBT] 未找到指标列表容器'); return; }
+
+  const labels = container.querySelectorAll('label');
+  console.log('[QBT] 指标列表共', labels.length, '个');
+
+  for (const label of labels) {
+    const span = label.querySelector('span:nth-child(2)');
+    if (!span) continue;
+    const name = span.textContent.trim();
+    const isSelected = checkLabelSelected(label);
+
+    if (name === '销售额') {
+      if (!isSelected) {
+        console.log('[QBT] 点击选中"销售额"');
+        label.click();
+      }
+    } else {
+      if (isSelected) {
+        console.log('[QBT] 点击取消"' + name + '"');
+        label.click();
+      }
+    }
+  }
+}
+
+function checkLabelSelected(label) {
+  const afterStyle = window.getComputedStyle(label, '::after');
+  return afterStyle && afterStyle.content && afterStyle.content !== 'none';
 }
 
 function findLabelByText(text) {
