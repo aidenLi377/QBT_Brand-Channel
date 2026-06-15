@@ -22,9 +22,9 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 直接从 DOM 获取表格数据（tr/td → TSV）
-  const tsv = getTableData();
-  const data = parseTSV(tsv);
+  // 直接从 DOM 解析表格（利用 colSpan 定位"销售额"列）
+  const table = findBestTable();
+  const data = table ? parseTableDOM(table) : [];
   let results = task.results || [];
 
   if (data && data.length > 0) {
@@ -301,70 +301,63 @@ function findBestTable() {
   return bestTable;
 }
 
-function getTableData() {
-  const table = findBestTable();
-  if (!table) { console.warn('[QBT] 未找到数据表格'); return ''; }
-  return buildTSV(table);
-}
-
-function buildTSV(table) {
+// === 直接从 DOM 解析表格：按 colSpan 定位"销售额"列 ===
+// 表格结构：
+//   Row 0: 类别名称 | 202601(colSpan=N) | 202602(colSpan=N) | ... | 总计
+//   Row 1: 销量 | 占比 | ... | 销售额 | ... | 销量 | 占比 | ... | 销售额 | ...
+//   Row 2: 数据...
+//   Row 3: 总计
+// 每个月有多个指标子列，我们只取"销售额"列
+function parseTableDOM(table) {
   const trs = table.querySelectorAll('tr');
-  const rows = [];
-  for (const tr of trs) {
-    const cells = tr.querySelectorAll('td, th');
-    if (cells.length === 0) continue;
-    const rowData = Array.from(cells).map(c => c.textContent.trim());
-    rows.push(rowData.join('\t'));
+  if (trs.length < 3) { console.warn('[QBT] 表格行数<3'); return []; }
+
+  // Row 0: 月份表头（含 colSpan）
+  const headerCells = Array.from(trs[0].querySelectorAll('th, td'));
+  let colIdx = 0;
+  const monthRanges = [];
+  for (const cell of headerCells) {
+    const text = cell.textContent.trim();
+    const span = parseInt(cell.getAttribute('colSpan') || '1', 10);
+    if (text && text !== '类别名称' && text !== '总计' && /^\d{6}$/.test(text)) {
+      monthRanges.push({ month: text, start: colIdx, end: colIdx + span });
+    }
+    colIdx += span;
   }
-  const result = rows.join('\n');
-  console.log('[QBT] 构建TSV:', trs.length, '行, 长度:', result.length);
-  return result;
-}
+  console.log('[QBT] 月份区间:', JSON.stringify(monthRanges));
 
-// === 解析 TSV 数据 ===
-function parseTSV(tsvText) {
-  console.log('[QBT] 原始复制数据:\n', tsvText ? tsvText.substring(0, 200) : '(空)');
+  // Row 1: 子表头（每个指标的列名）
+  const subCells = Array.from(trs[1].querySelectorAll('th, td'));
+  const subHeaders = subCells.map(c => c.textContent.trim());
+  console.log('[QBT] 子表头列数:', subHeaders.length);
 
-  if (!tsvText || tsvText.trim().length === 0) {
-    console.warn('[QBT] 复制数据为空');
-    return [];
+  // 找出所有"销售额"所在的列索引
+  const salesIndices = [];
+  for (let i = 0; i < subHeaders.length; i++) {
+    if (subHeaders[i] === '销售额') {
+      salesIndices.push(i);
+    }
   }
+  console.log('[QBT] 销售额列索引:', salesIndices);
 
-  const lines = tsvText.split(/\r?\n/).filter(line => line.trim().length > 0);
-  console.log('[QBT] 共', lines.length, '行');
+  if (salesIndices.length === 0) { console.warn('[QBT] 未找到销售额列'); return []; }
 
-  if (lines.length < 2) { console.warn('[QBT] 数据行数不足'); return []; }
+  // Row 2: 数据行
+  const dataCells = Array.from(trs[2].querySelectorAll('td'));
 
-  const rows = lines.map(line => line.split('\t'));
-
-  // 移除 Row 1（销售额子表头）和最后一行（总计），每行去掉最后一列
-  const processedRows = [];
-  for (let i = 0; i < rows.length; i++) {
-    if (i === 1 || i === rows.length - 1) continue;
-    processedRows.push(rows[i].slice(0, -1));
-  }
-
-  if (processedRows.length < 2) { console.warn('[QBT] 处理后数据行数不足'); return []; }
-
-  const headerRow = processedRows[0];
-  const monthHeaders = headerRow.slice(1);
-  console.log('[QBT] 月份列:', monthHeaders);
-
+  // 构建结果：每个销售额值对应一个月份
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
-  const results = [];
-  for (let i = 1; i < processedRows.length; i++) {
-    const dataRow = processedRows[i];
-    const rowData = { category: categoryName };
-    monthHeaders.forEach((header, idx) => {
-      rowData[header] = (dataRow[idx + 1] || '').trim();
-    });
-    results.push(rowData);
+  const rowData = { category: categoryName };
+  for (let si = 0; si < salesIndices.length; si++) {
+    const idx = salesIndices[si];
+    const month = (si < monthRanges.length) ? monthRanges[si].month : ('col' + idx);
+    rowData[month] = dataCells[idx] ? dataCells[idx].textContent.trim() : '';
   }
 
-  console.log('[QBT] 解析结果:', results);
-  return results;
+  console.log('[QBT] 解析结果:', rowData);
+  return [rowData];
 }
 
 // === 从面包屑获取类目名称 ===
