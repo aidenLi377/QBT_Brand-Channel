@@ -105,6 +105,8 @@ async function startNewScraping(brands) {
 
 // === 设置页面并点击检索 ===
 async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, results) {
+  console.log('[QBT] === 设置表单: 品牌=' + brand + ', 渠道=' + channel + ' ===');
+
   ensureCustomSelected();
   inputBrandName(brand);
 
@@ -129,6 +131,9 @@ async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, r
     }
   });
 
+  console.log('[QBT] === 表单设置完成，即将点击检索 ===');
+  // 短暂延迟确保日志可见（页面即将跳转）
+  await sleep(300);
   clickSearch();
 }
 
@@ -325,68 +330,56 @@ function findBestTable() {
   return bestTable;
 }
 
-// === 直接从 DOM 解析表格：按 colSpan 定位"销售额"列 ===
-// 表格结构：
-//   Row 0: 类别名称 | 202601(colSpan=N) | 202602(colSpan=N) | ... | 总计
-//   Row 1: 销量 | 占比 | ... | 销售额 | ... | 销量 | 占比 | ... | 销售额 | ...
-//   Row 2: 数据...
-//   Row 3: 总计
-// 每个月有多个指标子列，我们只取"销售额"列
+// === 直接从 DOM 解析表格：按子表头定位"销售额"列 ===
+// 表格不使用 colSpan，而是通过 <colgroup> 定义列。
+// Row 0: 类别名称 | 202601 | 202602 | 202603 | 202604 | 202605 | 总计
+// Row 1: 销量 | 占比 | ... | 销售额 | ... (每个月的指标重复)
+// Row 2: 0-∞元 | 数据...
+// 策略：从 Row 0 提取月份，从 Row 1 找"销售额"位置，按顺序一一对应
 function parseTableDOM(table) {
   const trs = table.querySelectorAll('tr');
   if (trs.length < 3) { console.warn('[QBT] 表格行数<3'); return []; }
 
-  // Row 0: 月份表头（含 colSpan）
+  // Row 0: 提取月份名（匹配6位数字的单元格）
   const headerCells = Array.from(trs[0].querySelectorAll('th, td'));
-  let colIdx = 0;
-  const monthRanges = [];
+  const months = [];
   for (const cell of headerCells) {
     const text = cell.textContent.trim();
-    const span = cell.colSpan || 1;
-    if (text && text !== '类别名称' && text !== '总计' && /^\d{6}$/.test(text)) {
-      monthRanges.push({ month: text, start: colIdx, end: colIdx + span });
-    }
-    colIdx += span;
+    if (/^\d{6}$/.test(text)) months.push(text);
   }
-  console.log('[QBT] 月份区间:', JSON.stringify(monthRanges));
+  console.log('[QBT] 月份:', months);
 
-  // Row 1: 子表头（每个指标的列名）
+  // Row 1: 子表头（指标名称）
   const subCells = Array.from(trs[1].querySelectorAll('th, td'));
   const subHeaders = subCells.map(c => c.textContent.trim());
   console.log('[QBT] 子表头列数:', subHeaders.length);
 
-  // 找出所有"销售额"所在的列索引
+  // 找出所有"销售额"的列索引
   const salesIndices = [];
   for (let i = 0; i < subHeaders.length; i++) {
-    if (subHeaders[i] === '销售额') {
-      salesIndices.push(i);
-    }
+    if (subHeaders[i] === '销售额') salesIndices.push(i);
   }
-  console.log('[QBT] 销售额列索引:', salesIndices);
+  console.log('[QBT] 销售额列索引:', salesIndices, '→ 月份数:', months.length);
 
   if (salesIndices.length === 0) { console.warn('[QBT] 未找到销售额列'); return []; }
 
   // Row 2: 数据行
   const dataCells = Array.from(trs[2].querySelectorAll('td'));
 
-  // 检测数据行偏移：第一列通常是"0-∞元"之类的类别占位
-  // 子表头从第1列开始（跳过类别列），所以要加偏移
+  // 数据行第一列是 "0-∞元" 类别占位，需要偏移 +1
   const firstCellText = dataCells.length > 0 ? dataCells[0].textContent.trim() : '';
   const dataOffset = (firstCellText.includes('元') || firstCellText === '') ? 1 : 0;
   console.log('[QBT] 数据行第一格:', firstCellText, '→ 偏移:', dataOffset);
-  console.log('[QBT] 数据行列数:', dataCells.length, '子表头列数:', subHeaders.length);
 
-  // 构建结果：每个销售额值对应一个月份
+  // 一一对应：第 i 个"销售额" → 第 i 个月（跳过最后的总计列）
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
-  // 只取月份数量的销售额值（排除总计列的"销售额"）
-  const count = Math.min(salesIndices.length, monthRanges.length);
-
   const rowData = { category: categoryName };
-  for (let si = 0; si < count; si++) {
-    const idx = salesIndices[si] + dataOffset;
-    rowData[monthRanges[si].month] = (idx < dataCells.length && dataCells[idx]) ? dataCells[idx].textContent.trim() : '';
+  const count = Math.min(salesIndices.length, months.length);
+  for (let i = 0; i < count; i++) {
+    const cellIdx = salesIndices[i] + dataOffset;
+    rowData[months[i]] = (cellIdx < dataCells.length && dataCells[cellIdx]) ? dataCells[cellIdx].textContent.trim() : '';
   }
 
   console.log('[QBT] 解析结果:', rowData);
@@ -395,39 +388,58 @@ function parseTableDOM(table) {
 
 // === 从面包屑获取类目名称 ===
 function getCategoryFromBreadcrumb() {
-  // 尝试多个 XPath
-  let breadcrumb = getElementByXPath(
+  // 策略1: 用户提供的精确 XPath
+  let container = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]/div[1]'
   );
-  if (!breadcrumb) {
-    breadcrumb = getElementByXPath(
+  if (!container) {
+    container = getElementByXPath(
       '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
     );
   }
-  // 回退：查找页面上所有面包屑结构（含多个 a 标签的容器）
-  if (!breadcrumb) {
-    const allDivs = document.querySelectorAll('div');
-    for (const div of allDivs) {
-      const links = div.querySelectorAll('a');
-      if (links.length >= 2) {
-        const texts = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
-        if (texts.length >= 2) {
-          const last = texts[texts.length - 1];
-          if (last.length > 1 && last.length < 30) {
-            console.log('[QBT] 回退找到类目:', last, '(来自', texts.length, '级面包屑)');
-            return last;
+
+  if (container) {
+    const links = container.querySelectorAll('a');
+    const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
+    console.log('[QBT] XPath面包屑:', names);
+    if (names.length > 0) return names[names.length - 1];
+  }
+
+  // 策略2: 全页搜索面包屑（含 >=2 个链接且类目名合理的容器）
+  const allWithLinks = document.querySelectorAll('a');
+  // 找有 ">" 或 "/" 分隔符的连续链接组
+  const candidates = [];
+  for (const a of allWithLinks) {
+    const text = a.textContent.trim();
+    if (text.length >= 2 && text.length < 20 && !/^\d/.test(text)) {
+      // 检查父元素是否包含多个链接
+      const parent = a.parentElement;
+      if (parent) {
+        const siblingLinks = parent.querySelectorAll('a');
+        if (siblingLinks.length >= 2) {
+          const allTexts = Array.from(siblingLinks).map(l => l.textContent.trim()).filter(t => t.length > 1);
+          if (allTexts.length >= 2 && !candidates.includes(allTexts)) {
+            candidates.push(allTexts);
           }
         }
       }
     }
   }
 
-  if (!breadcrumb) { console.warn('[QBT] 未找到面包屑元素'); return ''; }
+  // 取最长的面包屑（级数最多的）
+  let best = [];
+  for (const c of candidates) {
+    if (c.length > best.length) best = c;
+  }
 
-  const links = breadcrumb.querySelectorAll('a');
-  const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
-  console.log('[QBT] 面包屑层级:', names);
-  return names.length > 0 ? names[names.length - 1] : '';
+  if (best.length > 0) {
+    const last = best[best.length - 1];
+    console.log('[QBT] 回退面包屑:', best, '→ 类目:', last);
+    return last;
+  }
+
+  console.warn('[QBT] 未找到面包屑');
+  return '';
 }
 
 // === 工具函数 ===
