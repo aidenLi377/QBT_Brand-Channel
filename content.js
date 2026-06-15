@@ -7,17 +7,33 @@ let stopFlag = false;
   const state = await getState();
   if (state && state.pendingTask) {
     stopFlag = state.pendingTask.stopFlag || false;
+    // 等待表格加载完成
+    const tableReady = await waitForTable(15000);
+    if (!tableReady) {
+      console.warn('[QBT] 页面加载后未检测到结果表格，2秒后重试...');
+      await sleep(2000);
+      const retry = await waitForTable(10000);
+      if (!retry) {
+        console.error('[QBT] 表格加载超时，跳过当前步骤');
+        // 仍尝试解析（可能表格结构不同）
+      }
+    }
     await resumeAfterReload(state.pendingTask);
   }
 })();
 
 async function resumeAfterReload(task) {
+  console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
+
   // 页面刚跳转回来，解析当前表格
   const data = parseTable();
   let results = task.results || [];
 
   if (data && data.length > 0) {
     data.forEach(row => results.push({ channel: task.channel, brand: task.brand, ...row }));
+    console.log('[QBT] 成功解析', data.length, '行数据, 累计:', results.length);
+  } else {
+    console.warn('[QBT] 未解析到数据，继续下一步');
   }
 
   // 判断下一步
@@ -216,50 +232,134 @@ function clickSearch() {
   else console.warn('[QBT] 未找到检索按钮');
 }
 
-// === 表格解析 ===
-function parseTable() {
-  const colgroup = getElementByXPath(
+// === 等待表格出现 ===
+function waitForTable(timeout = 15000) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      if (Date.now() - startTime > timeout) { resolve(false); return; }
+      const table = findResultTable();
+      if (table) {
+        const tbody = table.querySelector('tbody');
+        const rows = tbody ? tbody.querySelectorAll('tr') : [];
+        if (rows.length >= 2) { resolve(true); return; }
+      }
+      setTimeout(check, 500);
+    };
+    check();
+  });
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// === 查找结果表格（多种策略） ===
+function findResultTable() {
+  // 策略1: 用户提供的 XPath 到 colgroup
+  let colgroup = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[2]/div[2]/div[3]/div[1]/div[1]/div[1]/div[2]/div/table/colgroup'
   );
-  if (!colgroup) { console.warn('[QBT] 未找到结果表格'); return []; }
+  if (colgroup) return colgroup.closest('table');
 
-  const table = colgroup.closest('table');
-  const tbody = table.querySelector('tbody');
-  if (!tbody) return [];
-
-  const allRows = Array.from(tbody.querySelectorAll('tr'));
-
-  // 移除最后一行（总计）
-  const dataRows = allRows.slice(0, -1);
-
-  // 跳过第二行（销量子表头，index=1）
-  const filteredRows = dataRows.filter((row, index) => index !== 1);
-
-  // 获取表头中的月份列名（第一行）
-  const headerCells = allRows[0] ? Array.from(allRows[0].querySelectorAll('th, td')) : [];
-  const monthHeaders = headerCells.slice(1, -1).map(cell => cell.textContent.trim());
-
-  const results = [];
-  for (const row of filteredRows) {
-    const cells = Array.from(row.querySelectorAll('td'));
-
-    // 移除最后一列（总计）
-    const dataCells = cells.slice(0, -1);
-
-    if (dataCells.length === 0) continue;
-
-    const categoryName = dataCells[0] ? dataCells[0].textContent.trim() : '';
-
-    const rowData = { category: categoryName };
-    monthHeaders.forEach((header, idx) => {
-      const cell = dataCells[idx + 1];
-      rowData[header] = cell ? cell.textContent.trim() : '';
-    });
-
-    results.push(rowData);
+  // 策略2: 简化 XPath（div[5] 区域下的第一个 table）
+  const area = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]'
+  );
+  if (area) {
+    const tables = area.querySelectorAll('table');
+    for (const t of tables) {
+      const rows = t.querySelectorAll('tbody tr');
+      if (rows.length >= 2) return t;
+    }
   }
 
-  return results;
+  // 策略3: 全局搜索包含 colgroup 且有 tbody 的 table
+  const allTables = document.querySelectorAll('table');
+  for (const t of allTables) {
+    if (t.querySelector('colgroup') && t.querySelector('tbody tr')) {
+      return t;
+    }
+  }
+
+  return null;
+}
+
+// === 表格解析 ===
+function parseTable() {
+  const table = findResultTable();
+  if (!table) { console.warn('[QBT] 未找到结果表格'); return []; }
+
+  const tbody = table.querySelector('tbody');
+  if (!tbody) { console.warn('[QBT] 表格无 tbody'); return []; }
+
+  const allRows = Array.from(tbody.querySelectorAll('tr'));
+  console.log('[QBT] 表格共', allRows.length, '行');
+
+  if (allRows.length < 2) { console.warn('[QBT] 表格行数不足'); return []; }
+
+  // 实际表格结构（4行，取第1行和第3行）：
+  // Row 0: 表头行 — 类别名称 | 月份1 | 月份2 | ... | 总计
+  // Row 1: 跳过（暂无数据 或 销量子表头）
+  // Row 2: 数据行 — 0-∞元 | 数值1 | 数值2 | ... | 总计
+  // Row 3: 总计行 — 跳过
+
+  // 取第1行 (index 0) 和第3行 (index 2)
+  const headerRow = allRows[0];
+  let dataRow = allRows.length >= 3 ? allRows[2] : null;
+
+  // 如果只有2-3行，尝试取最后一行非总计的行作为数据行
+  if (!dataRow && allRows.length >= 2) {
+    dataRow = allRows[1];
+  }
+
+  if (!headerRow || !dataRow) { console.warn('[QBT] 无法定位表头行或数据行'); return []; }
+
+  // 从表头行提取月份列名
+  const headerCells = Array.from(headerRow.querySelectorAll('th, td'));
+  // 去掉第一列（类别名称）和最后一列（总计）
+  const monthHeaders = headerCells.slice(1, -1).map(cell => cell.textContent.trim());
+  console.log('[QBT] 月份列:', monthHeaders);
+
+  // 从数据行提取数值
+  const dataCells = Array.from(dataRow.querySelectorAll('td'));
+
+  // 去掉最后一列（总计）
+  const valueCells = dataCells.slice(0, -1);
+
+  if (valueCells.length === 0) { console.warn('[QBT] 数据行无单元格'); return []; }
+
+  // 第一列是类别占位（0-∞元），替换为面包屑类目名称
+  const categoryName = getCategoryFromBreadcrumb();
+  console.log('[QBT] 类目名称:', categoryName);
+
+  const rowData = { category: categoryName };
+  monthHeaders.forEach((header, idx) => {
+    const cell = valueCells[idx + 1];
+    rowData[header] = cell ? cell.textContent.trim() : '';
+  });
+
+  console.log('[QBT] 解析结果:', rowData);
+  return [rowData];
+}
+
+// === 从面包屑获取类目名称 ===
+function getCategoryFromBreadcrumb() {
+  // XPath: /html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]
+  const breadcrumb = getElementByXPath(
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
+  );
+  if (!breadcrumb) {
+    console.warn('[QBT] 未找到面包屑元素');
+    return '';
+  }
+
+  // 获取所有 a 标签的文本，拼接为完整类目路径
+  const links = breadcrumb.querySelectorAll('a');
+  const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
+
+  // 返回最后一级类目（最具体的类目名称）
+  return names.length > 0 ? names[names.length - 1] : '';
 }
 
 // === 工具函数 ===
