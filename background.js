@@ -12,6 +12,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse(result.scraperState || { status: 'idle', progress: 0, total: 0, results: [] });
     });
-    return true; // 异步响应
+    return true;
+  }
+
+  if (message.type === 'updateBadge') {
+    if (message.text) {
+      chrome.action.setBadgeText({ text: message.text });
+      chrome.action.setBadgeBackgroundColor({ color: message.color || '#1a56db' });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
   }
 });

@@ -7,15 +7,13 @@ let stopFlag = false;
   const state = await getState();
   if (state && state.pendingTask) {
     stopFlag = state.pendingTask.stopFlag || false;
+    updateBadge(state.completed || 0, state.total || 0);
     // 等待一键复制按钮出现
     const btnReady = await waitForCopyButton(15000);
     if (!btnReady) {
       console.warn('[QBT] 页面加载后未检测到一键复制按钮，2秒后重试...');
       await sleep(2000);
-      const retry = await waitForCopyButton(10000);
-      if (!retry) {
-        console.error('[QBT] 一键复制按钮加载超时');
-      }
+      await waitForCopyButton(10000);
     }
     await resumeAfterReload(state.pendingTask);
   }
@@ -39,11 +37,9 @@ async function resumeAfterReload(task) {
   let nextChannel, nextBrandIdx;
 
   if (task.channel === 'all') {
-    // 刚完成"全部"，现在做"淘宝全部"
     nextChannel = 'taobao';
     nextBrandIdx = task.brandIndex;
   } else {
-    // 刚完成"淘宝全部"，移到下一个品牌
     nextChannel = 'all';
     nextBrandIdx = task.brandIndex + 1;
   }
@@ -53,10 +49,12 @@ async function resumeAfterReload(task) {
     updateState({
       status: stopFlag ? 'stopped' : 'done',
       completed: task.totalBrands,
+      total: task.totalBrands,
       current: '',
       results: results,
       pendingTask: null
     });
+    updateBadge(task.totalBrands, task.totalBrands);
     return;
   }
 
@@ -64,11 +62,12 @@ async function resumeAfterReload(task) {
 
   updateState({
     completed: nextBrandIdx,
+    total: task.totalBrands,
     current: nextBrand,
     results: results
   });
+  updateBadge(nextBrandIdx, task.totalBrands);
 
-  // 设置页面并点击检索
   await setupAndSearch(nextBrand, nextChannel, nextBrandIdx, task.brands, task.totalBrands, results);
 }
 
@@ -81,6 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'stopScraping') {
     stopFlag = true;
     updateState({ stopFlag: true });
+    updateBadge(0, 0);
     sendResponse({ accepted: true });
   }
   return true;
@@ -88,6 +88,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function startNewScraping(brands) {
   const brand = brands[0];
+  updateBadge(0, brands.length);
 
   updateState({
     status: 'running',
@@ -103,13 +104,9 @@ async function startNewScraping(brands) {
 
 // === 设置页面并点击检索 ===
 async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, results) {
-  // 1. 确保"自定义"已选中
   ensureCustomSelected();
-
-  // 2. 输入品牌名称
   inputBrandName(brand);
 
-  // 3. 设置查看范围
   if (channel === 'all') {
     ensureCheckboxSelected('全部');
   } else if (channel === 'taobao') {
@@ -117,10 +114,8 @@ async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, r
     ensureCheckboxSelected('淘宝全部');
   }
 
-  // 4. 设置排序方式为"销售额"
   ensureSortOrderSelected('销售额');
 
-  // 5. 保存待处理任务（页面跳转后恢复用）
   updateState({
     pendingTask: {
       brand: brand,
@@ -133,7 +128,6 @@ async function setupAndSearch(brand, channel, brandIndex, brands, totalBrands, r
     }
   });
 
-  // 6. 点击检索（会触发页面跳转）
   clickSearch();
 }
 
@@ -194,23 +188,17 @@ function ensureCheckboxDeselected(labelText) {
 
 // === 排序方式操作 ===
 function ensureSortOrderSelected(labelText) {
-  // 优先使用用户提供的精确 XPath
   let targetLabel = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[9]/td[2]/label[2]'
   );
-
-  // 回退：按文本查找
   if (!targetLabel) {
     targetLabel = findLabelByText(labelText);
   }
-
   if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"排序方式元素'); return; }
 
-  // 检查是否已选中：::after 伪元素存在表示已选中
   const afterStyle = window.getComputedStyle(targetLabel, '::after');
   if (afterStyle && afterStyle.content && afterStyle.content !== 'none') return;
 
-  // 未选中，点击
   targetLabel.click();
 }
 
@@ -238,7 +226,7 @@ function waitForCopyButton(timeout = 15000) {
     const check = () => {
       if (Date.now() - startTime > timeout) { resolve(false); return; }
       const btn = getCopyButton();
-      if (btn) { resolve(true); return; }
+      if (btn) { console.log('[QBT] 一键复制按钮已出现'); resolve(true); return; }
       setTimeout(check, 500);
     };
     check();
@@ -256,6 +244,8 @@ function getCopyButton() {
 }
 
 // === 通过一键复制获取并解析数据 ===
+// 关键：注入 <script> 到页面主世界拦截 clipboard.write，
+// 因为 content script 的隔离世界中 navigator.clipboard 和页面的是两个不同对象
 function copyAndParseData() {
   return new Promise((resolve) => {
     const btn = getCopyButton();
@@ -268,104 +258,112 @@ function copyAndParseData() {
     let resolved = false;
     let capturedText = null;
 
-    // 猴子补丁拦截 navigator.clipboard.write（页面用的是 Clipboard API）
-    const originalWrite = navigator.clipboard.write.bind(navigator.clipboard);
-    navigator.clipboard.write = async function (clipboardItems) {
-      console.log('[QBT] 拦截到 clipboard.write, items:', clipboardItems.length);
-      for (const item of clipboardItems) {
-        if (item.types.includes('text/plain')) {
-          try {
-            const blob = await item.getType('text/plain');
-            capturedText = await blob.text();
-            console.log('[QBT] 捕获到文本数据, 长度:', capturedText.length);
-          } catch (e) {
-            console.warn('[QBT] 提取 text/plain 失败:', e.message);
-          }
-        }
+    // 监听来自页面主世界的 postMessage
+    const msgHandler = (e) => {
+      if (e.data && e.data.type === 'QBT_CLIPBOARD_DATA') {
+        capturedText = e.data.text;
+        console.log('[QBT] 收到页面数据, 长度:', capturedText ? capturedText.length : 0);
       }
     };
+    window.addEventListener('message', msgHandler);
 
-    // 点击按钮
+    // 注入脚本到页面主世界——拦截 navigator.clipboard.write
+    injectPageScript();
+
+    // 点击一键复制按钮
+    btn.focus();
     btn.click();
 
-    // 等待 ClipboardItem promises 完成
-    setTimeout(async () => {
-      navigator.clipboard.write = originalWrite;
+    // 等待数据回传
+    setTimeout(() => {
+      window.removeEventListener('message', msgHandler);
       if (resolved) return;
       resolved = true;
 
       if (capturedText) {
-        console.log('[QBT] 成功捕获剪贴板数据');
+        console.log('[QBT] 成功捕获数据');
         resolve(parseTSV(capturedText));
       } else {
         console.warn('[QBT] 未能捕获剪贴板数据');
         resolve([]);
       }
-    }, 1500);
+    }, 2000);
   });
 }
 
+// 注入脚本到页面主世界
+function injectPageScript() {
+  // 先移除旧的
+  const old = document.getElementById('qbt-intercept');
+  if (old) old.remove();
+
+  const script = document.createElement('script');
+  script.id = 'qbt-intercept';
+  script.textContent = `
+    (function() {
+      if (window.__qbt_patched) return;
+      window.__qbt_patched = true;
+
+      var _write = navigator.clipboard.write.bind(navigator.clipboard);
+      navigator.clipboard.write = function(items) {
+        var itemsArray = items;
+        for (var i = 0; i < itemsArray.length; i++) {
+          var item = itemsArray[i];
+          if (item.types.indexOf('text/plain') !== -1) {
+            item.getType('text/plain').then(function(blob) {
+              return blob.text();
+            }).then(function(text) {
+              window.postMessage({ type: 'QBT_CLIPBOARD_DATA', text: text }, '*');
+            }).catch(function(){});
+          }
+        }
+        return Promise.resolve();
+      };
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(script);
+  script.remove();
+}
+
 // === 解析 TSV 数据 ===
-// 复制的数据格式（制表符分隔）：
-// Row 0: 类别名称\t202601\t202602\t...\t总计
-// Row 1: 销售额\t销售额\t销售额\t...\t销售额     ← 跳过
-// Row 2: 0-∞元\t79339027\t60920183\t...\t...  ← 数据行
-// Row 3: 总计\t...                              ← 跳过
 function parseTSV(tsvText) {
-  console.log('[QBT] 原始复制数据:\n', tsvText);
+  console.log('[QBT] 原始复制数据:\n', tsvText ? tsvText.substring(0, 200) : '(空)');
 
   if (!tsvText || tsvText.trim().length === 0) {
     console.warn('[QBT] 复制数据为空');
     return [];
   }
 
-  // 按换行分割
   const lines = tsvText.split(/\r?\n/).filter(line => line.trim().length > 0);
   console.log('[QBT] 共', lines.length, '行');
 
-  if (lines.length < 2) {
-    console.warn('[QBT] 数据行数不足');
-    return [];
-  }
+  if (lines.length < 2) { console.warn('[QBT] 数据行数不足'); return []; }
 
-  // 将每行按制表符分割
   const rows = lines.map(line => line.split('\t'));
 
-  // 移除第2行（index 1，销售额子表头）
-  // 移除最后一行（总计）
-  // 同时移除每行最后一列（总计列）
+  // 移除 Row 1（销售额子表头）和最后一行（总计），每行去掉最后一列
   const processedRows = [];
   for (let i = 0; i < rows.length; i++) {
-    // 跳过 Row 1（销售额子表头）和最后一行（总计）
     if (i === 1 || i === rows.length - 1) continue;
-    // 去掉最后一列
     processedRows.push(rows[i].slice(0, -1));
   }
 
-  if (processedRows.length < 2) {
-    console.warn('[QBT] 处理后数据行数不足');
-    return [];
-  }
+  if (processedRows.length < 2) { console.warn('[QBT] 处理后数据行数不足'); return []; }
 
-  // 第一行是表头（类别名称 + 月份列）
   const headerRow = processedRows[0];
-  const monthHeaders = headerRow.slice(1); // 跳过"类别名称"列
+  const monthHeaders = headerRow.slice(1);
   console.log('[QBT] 月份列:', monthHeaders);
 
-  // 从面包屑获取真实类目名称
   const categoryName = getCategoryFromBreadcrumb();
   console.log('[QBT] 类目名称:', categoryName);
 
-  // 后续行是数据行
   const results = [];
   for (let i = 1; i < processedRows.length; i++) {
     const dataRow = processedRows[i];
     const rowData = { category: categoryName };
-
     monthHeaders.forEach((header, idx) => {
       rowData[header] = (dataRow[idx + 1] || '').trim();
     });
-
     results.push(rowData);
   }
 
@@ -375,20 +373,13 @@ function parseTSV(tsvText) {
 
 // === 从面包屑获取类目名称 ===
 function getCategoryFromBreadcrumb() {
-  // XPath: /html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]
   const breadcrumb = getElementByXPath(
     '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
   );
-  if (!breadcrumb) {
-    console.warn('[QBT] 未找到面包屑元素');
-    return '';
-  }
+  if (!breadcrumb) { console.warn('[QBT] 未找到面包屑元素'); return ''; }
 
-  // 获取所有 a 标签的文本，拼接为完整类目路径
   const links = breadcrumb.querySelectorAll('a');
   const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
-
-  // 返回最后一级类目（最具体的类目名称）
   return names.length > 0 ? names[names.length - 1] : '';
 }
 
@@ -414,4 +405,14 @@ function updateState(partial) {
     const state = { ...(data.scraperState || {}), ...partial };
     chrome.storage.local.set({ scraperState: state });
   });
+}
+
+// === 扩展图标角标 ===
+function updateBadge(completed, total) {
+  const text = total > 0 ? String(completed) : '';
+  chrome.runtime.sendMessage({ type: 'updateBadge', text: text }).catch(() => {});
+  if (completed >= total && total > 0) {
+    // 完成时用绿色
+    chrome.runtime.sendMessage({ type: 'updateBadge', text: '✓', color: '#10b981' }).catch(() => {});
+  }
 }
