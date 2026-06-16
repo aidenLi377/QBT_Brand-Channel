@@ -215,7 +215,7 @@ async function startScraping() {
     showStatus('通信失败: ' + err.message, 'error');
     updateUI('idle');
   }
-});
+}
 
 stopBtn.addEventListener('click', async () => {
   chrome.storage.local.set({
