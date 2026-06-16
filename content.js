@@ -8,12 +8,23 @@ let stopFlag = false;
   if (state && state.pendingTask) {
     stopFlag = state.pendingTask.stopFlag || false;
     updateBadge(state.completed || 0, state.total || 0);
-    // 等待结果表格出现
-    const ready = await waitForResultTable(15000);
+
+    // 先快速检查是否"暂无数据"，是则直接跳过（不等表格超时）
+    if (checkNoData()) {
+      console.log('[QBT] 检测到"暂无数据"，跳过等待');
+      let errors = state.pendingTask.errors || [];
+      if (!errors.find(e => e.brand === state.pendingTask.brand)) {
+        errors.push({ brand: state.pendingTask.brand, channel: '' });
+      }
+      state.pendingTask.errors = errors;
+      resumeAfterReload(state.pendingTask);
+      return;
+    }
+
+    // 等待结果表格出现（最多 5 秒）
+    const ready = await waitForResultTable(5000);
     if (!ready) {
-      console.warn('[QBT] 页面加载后未检测到结果表格，2秒后重试...');
-      await sleep(2000);
-      await waitForResultTable(10000);
+      console.warn('[QBT] 表格加载超时，尝试解析...');
     }
     await resumeAfterReload(state.pendingTask);
   }
@@ -22,19 +33,7 @@ let stopFlag = false;
 async function resumeAfterReload(task) {
   console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
 
-  // 检查是否显示"暂时没有符合条件的数据"
-  if (checkNoData()) {
-    console.log('[QBT] 品牌"' + task.brand + '"无数据，跳过');
-    let errors = task.errors || [];
-    if (!errors.find(e => e.brand === task.brand)) {
-      errors.push({ brand: task.brand, channel: '' });
-    }
-    // 直接跳到下一个品牌
-    skipToNextBrand(task, task.results || [], errors);
-    return;
-  }
-
-  // 直接从 DOM 解析表格（利用 colSpan 定位"销售额"列）
+  // 直接从 DOM 解析表格
   const table = findBestTable();
   const data = table ? parseTableDOM(table) : [];
   let results = task.results || [];
