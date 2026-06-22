@@ -12,6 +12,8 @@ const currentChannelTag = document.getElementById('currentChannelTag');
 const progressFill = document.getElementById('progressFill');
 const brandStatusList = document.getElementById('brandStatusList');
 const resetBtn = document.getElementById('resetBtn');
+const unpivotCheck = document.getElementById('unpivotCheck');
+const exportOptions = document.getElementById('exportOptions');
 
 const POLL_INTERVAL_MS = 500;
 
@@ -48,6 +50,7 @@ function updateUI(status) {
       startBtn.textContent = '开始采集';
       stopBtn.classList.add('hidden');
       exportBtn.classList.add('hidden');
+      exportOptions.classList.add('hidden');
       progressSection.classList.add('hidden');
       brandListTextarea.classList.remove('hidden');
       brandStatusList.classList.add('hidden');
@@ -58,6 +61,7 @@ function updateUI(status) {
       startBtn.disabled = true;
       stopBtn.classList.remove('hidden');
       exportBtn.classList.add('hidden');
+      exportOptions.classList.add('hidden');
       progressSection.classList.remove('hidden');
       brandListTextarea.classList.add('hidden');
       brandStatusList.classList.remove('hidden');
@@ -70,6 +74,7 @@ function updateUI(status) {
       startBtn.disabled = false;
       stopBtn.classList.add('hidden');
       exportBtn.classList.remove('hidden');
+      exportOptions.classList.remove('hidden');
       progressSection.classList.remove('hidden');
       brandListTextarea.classList.add('hidden');
       brandStatusList.classList.remove('hidden');
@@ -182,12 +187,7 @@ function escapeHtml(str) {
 
 function updateBrandCount() {
   const brands = parseBrands(brandListTextarea.value);
-  const channelsPerBrand = 3; // 全部 + 淘宝全部 + 天猫
-  if (brands.length > 0) {
-    brandCount.textContent = brands.length + ' 个品牌 × ' + channelsPerBrand + ' 渠道 = ' + (brands.length * channelsPerBrand) + ' 条';
-  } else {
-    brandCount.textContent = '';
-  }
+  brandCount.textContent = brands.length > 0 ? brands.length + ' 个品牌' : '';
 }
 
 async function startScraping() {
@@ -263,39 +263,62 @@ stopBtn.addEventListener('click', async () => {
 exportBtn.addEventListener('click', () => {
   if (allResults.length === 0) return;
 
-  // 收集所有唯一的月份列名
+  // 收集所有唯一的日期列名
   const monthKeys = new Set();
   allResults.forEach(r => Object.keys(r).forEach(k => {
     if (k !== 'channel' && k !== 'brand' && k !== 'category' && k !== 'priceBand') monthKeys.add(k);
   }));
   const sortedMonths = Array.from(monthKeys).sort();
+  const unpivot = unpivotCheck.checked;
 
-  // 构建 CSV
-  const headers = ['类目', '渠道', '品牌名称', '价格带', ...sortedMonths];
-  const rows = allResults.map(r => {
-    const cells = [
-      r.category || '',
-      r.channel,
-      r.brand,
-      r.priceBand || '',
-      ...sortedMonths.map(m => r[m] || '')
-    ];
-    return cells.map(c => {
-      const str = String(c);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return '"' + str.replace(/"/g, '""') + '"';
+  const escapeCsv = (c) => {
+    const str = String(c);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+
+  let headers, csvRows;
+
+  if (unpivot) {
+    // 逆透视：每个日期列变为一行
+    headers = ['类目', '渠道', '品牌名称', '价格带', '日期', '销售额'];
+    csvRows = [];
+    for (const r of allResults) {
+      for (const m of sortedMonths) {
+        csvRows.push([
+          escapeCsv(r.category || ''),
+          escapeCsv(r.channel),
+          escapeCsv(r.brand),
+          escapeCsv(r.priceBand || ''),
+          escapeCsv(m),
+          escapeCsv(r[m] || '0'),
+        ].join(','));
       }
-      return str;
-    }).join(',');
-  });
+    }
+  } else {
+    // 宽格式：每个日期一列
+    headers = ['类目', '渠道', '品牌名称', '价格带', ...sortedMonths];
+    csvRows = allResults.map(r => {
+      return [
+        escapeCsv(r.category || ''),
+        escapeCsv(r.channel),
+        escapeCsv(r.brand),
+        escapeCsv(r.priceBand || ''),
+        ...sortedMonths.map(m => escapeCsv(r[m] || '')),
+      ].join(',');
+    });
+  }
 
-  const csv = '﻿' + headers.join(',') + '\n' + rows.join('\n'); // BOM for Excel
+  const csv = '﻿' + headers.join(',') + '\n' + csvRows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   const brandCount = new Set(allResults.map(r => r.brand)).size;
-  a.download = 'QBT_' + new Date().toISOString().slice(0, 10) + '_' + brandCount + 'brands.csv';
+  const suffix = unpivot ? '_unpivot' : '';
+  a.download = 'QBT_' + new Date().toISOString().slice(0, 10) + '_' + brandCount + 'brands' + suffix + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 });

@@ -370,6 +370,29 @@ body::before {
   transform: rotate(90deg);
 }
 
+/* === Export Options === */
+.export-options {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.unpivot-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: #78716c;
+  user-select: none;
+}
+.unpivot-toggle input[type="checkbox"] {
+  width: 14px; height: 14px;
+  accent-color: #f97316;
+  cursor: pointer;
+}
+.unpivot-toggle:hover .toggle-label { color: #c2410c; }
+
 /* === Actions === */
 .actions { display: flex; gap: 8px; }
 
