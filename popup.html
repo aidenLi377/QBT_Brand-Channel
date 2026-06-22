@@ -17,34 +17,27 @@
         </svg>
       </div>
       <div class="header-text">
-        <h1 class="title">QBT 自定义价格段控盘取数</h1>
-        <span class="subtitle">Nint Data Scraper</span>
+        <h1 class="title">QBT 控盘取数</h1>
+        <span class="subtitle">品牌批量采集 · 全部 + 淘宝 + 天猫</span>
       </div>
-      <button class="pin-btn" id="pinBtn" title="固定窗口（置顶 + 最小化）">
-        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M9.5 1.5L14.5 6.5L11 10L13 14L8.5 12.5L10.5 10.5L6 6L9.5 1.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-          <line x1="2" y1="14" x2="5" y2="11" stroke="currentColor" stroke-width="1.2"/>
-          <circle cx="9.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.2" fill="none" stroke-dasharray="2 2"/>
-        </svg>
-      </button>
+      <button id="resetBtn" class="reset-btn" title="重置">↺</button>
     </div>
 
-    <div class="section">
+    <div class="section" id="brandSection">
       <div class="label-row">
         <label class="label" for="brandList"><span class="label-dot"></span>品牌列表</label>
         <span class="brand-count" id="brandCount"></span>
       </div>
-      <div class="textarea-wrapper">
-        <textarea id="brandList" class="textarea" rows="7"
-                  placeholder="一行一个品牌，支持 Excel 直接粘贴&#10;按 Enter 开始采集 · Shift+Enter 换行"></textarea>
-        <button class="clear-btn" id="clearBtn" title="清空">×</button>
-      </div>
+      <textarea id="brandList" class="textarea" rows="7"
+                placeholder="一行一个品牌，支持 Excel 直接粘贴&#10;按 Enter 开始采集 · Shift+Enter 换行"></textarea>
+      <div id="brandStatusList" class="brand-status-list hidden"></div>
     </div>
 
     <div id="progressSection" class="section hidden">
       <div class="progress-info">
         <span class="progress-text" id="progressText">0 / 0</span>
-        <span class="current-brand" id="currentBrand"></span>
+        <span class="current-brand-name" id="currentBrandName"></span>
+        <span class="current-channel-tag" id="currentChannelTag"></span>
       </div>
       <div class="progress-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
         <div class="progress-fill" id="progressFill" style="width: 0%"></div>
@@ -57,7 +50,6 @@
       <button id="exportBtn" class="btn btn-success hidden">导出 CSV</button>
     </div>
 
-    <div id="statusMessage" class="status-message hidden"></div>
   </div>
 
   <script src="popup.js"></script>

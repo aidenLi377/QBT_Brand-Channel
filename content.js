@@ -1,17 +1,73 @@
 // content.js — Nint 页面 DOM 操控自动化
 
 let stopFlag = false;
+let pageLayout = null; // 'v1': 有"全部"复选框 | 'v2': 只有"淘宝全部"+"天猫全部"
+
+function detectLayout() {
+  if (pageLayout) return pageLayout;
+  const v2El = getElementByXPath('/html/body/div[1]/div[2]/div[1]/div[4]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/label[1]');
+  if (v2El && v2El.textContent.includes('淘宝全部')) { pageLayout = 'v2'; }
+  else { pageLayout = 'v1'; }
+  console.log('[QBT] 页面布局:', pageLayout);
+  return pageLayout;
+}
+
+// v1: 有"全部" → 渠道: all(全部) → taobao(淘宝) → 计算天猫
+// v2: 无"全部" → 渠道: taobao(淘宝) → tmall(天猫) → 计算全部
+const LAYOUT_CHANNELS = {
+  v1: { first: 'all', second: 'taobao', calc: 'tmall', baseline: 'first', firstLabel: '全部', secondLabel: '淘宝全部', calcLabel: '天猫' },
+  v2: { first: 'taobao', second: 'tmall', calc: 'all', baseline: 'second', firstLabel: '淘宝全部', secondLabel: '天猫全部', calcLabel: '全部' },
+};
+
+function getLayoutChannels() { return LAYOUT_CHANNELS[detectLayout()]; }
 
 // === 初始化：检查是否有待处理任务（页面跳转后恢复） ===
 (async function init() {
   const state = await getState();
   if (state && state.pendingTask) {
-    stopFlag = state.pendingTask.stopFlag || false;
+    stopFlag = state.stopFlag || (state.pendingTask && state.pendingTask.stopFlag) || false;
     updateBadge(state.completed || 0, state.total || 0);
 
-    // 先快速检查是否"暂无数据"，是则直接跳过（不等表格超时）
+    // 基线采集阶段：空白检索结果
+    if (state.pendingTask.phase === 'baseline') {
+      await waitForResultTable(5000);
+      const table = findBestTable();
+      const data = table ? parseTableDOM(table) : [];
+      const baselineData = (data && data.length > 0) ? data[0] : {};
+      delete baselineData.category;
+
+      const ch = getLayoutChannels();
+      const task = state.pendingTask;
+      const brand = task.brands[0];
+      const brandStatuses = task.brands.map(b => ({ brand: b, status: b === brand ? 'running' : 'pending' }));
+
+      updateState({
+        current: brand,
+        currentChannel: ch.firstLabel,
+        baselineData: baselineData,
+        failedBrands: [],
+        brandStatuses: brandStatuses,
+        pendingTask: {
+          ...task,
+          phase: 'scraping',
+          brand: brand,
+          channel: ch.first,
+          brandIndex: 0,
+          results: [],
+          errors: [],
+          failedBrands: [],
+          brandStatuses: brandStatuses,
+          baselineData: baselineData,
+          stopFlag: false
+        }
+      });
+      updateBadge(0, task.totalBrands);
+      await setupAndSearch(brand, ch.first);
+      return;
+    }
+
+    // 正常采集阶段
     if (checkNoData()) {
-      console.log('[QBT] 检测到"暂无数据"，跳过等待');
       let errors = state.pendingTask.errors || [];
       if (!errors.find(e => e.brand === state.pendingTask.brand)) {
         errors.push({ brand: state.pendingTask.brand, channel: '' });
@@ -21,7 +77,6 @@ let stopFlag = false;
       return;
     }
 
-    // 等待结果表格出现（最多 5 秒）
     const ready = await waitForResultTable(5000);
     if (!ready) {
       console.warn('[QBT] 表格加载超时，尝试解析...');
@@ -31,14 +86,14 @@ let stopFlag = false;
 })();
 
 async function resumeAfterReload(task) {
-  console.log('[QBT] 页面跳转后恢复, 渠道:', task.channel, '品牌:', task.brand);
+  const ch = getLayoutChannels();
+  const channelLabel = task.channel === ch.first ? ch.firstLabel : ch.secondLabel;
+  console.log('[QBT] 页面跳转后恢复, 渠道:', channelLabel, '品牌:', task.brand);
 
-  // 直接从 DOM 解析表格
   const table = findBestTable();
   const data = table ? parseTableDOM(table) : [];
   let results = task.results || [];
 
-  const channelLabel = task.channel === 'all' ? '全部' : '淘宝全部';
   let errors = task.errors || [];
 
   if (data && data.length > 0) {
@@ -46,41 +101,75 @@ async function resumeAfterReload(task) {
     console.log('[QBT] 成功解析', data.length, '行数据, 累计:', results.length);
   } else {
     console.warn('[QBT] 未解析到数据');
-    // 去重记录
     if (!errors.find(e => e.brand === task.brand && e.channel === channelLabel)) {
       errors.push({ brand: task.brand, channel: channelLabel });
     }
+    // 任意渠道取不到数据 → 标记无数据
+    const bs = task.brandStatuses || [];
+    const entry = bs.find(e => e.brand === task.brand);
+    if (entry) entry.status = 'no_data';
   }
 
-  // taobao 渠道完成后，计算天猫 = all - taobao
-  if (task.channel === 'taobao') {
-    const allEntry = results.find(r => r.channel === '全部' && r.brand === task.brand);
-    const taobaoEntry = results.find(r => r.channel === '淘宝全部' && r.brand === task.brand);
-    if (allEntry && taobaoEntry) {
-      const tianmaoEntry = { channel: '天猫', brand: task.brand };
-      const monthKeys = Object.keys(allEntry).filter(k => k !== 'channel' && k !== 'brand' && k !== 'category');
-      for (const key of monthKeys) {
-        const allVal = parseFloat(String(allEntry[key]).replace(/,/g, '')) || 0;
-        const tmallVal = parseFloat(String(taobaoEntry[key]).replace(/,/g, '')) || 0;
-        tianmaoEntry[key] = String(allVal - tmallVal);
+  let brandStatuses = task.brandStatuses || [];
+  let failedBrands = task.failedBrands || [];
+
+  // second 渠道完成后，计算第三行 + 基线对比
+  if (task.channel === ch.second) {
+    const firstEntries = results.filter(r => r.channel === ch.firstLabel && r.brand === task.brand);
+    const secondEntries = results.filter(r => r.channel === ch.secondLabel && r.brand === task.brand);
+    if (firstEntries.length > 0 && secondEntries.length > 0) {
+      const monthKeys = Object.keys(firstEntries[0]).filter(k => k !== 'channel' && k !== 'brand' && k !== 'category' && k !== 'priceBand');
+
+      // 对比基线：用第一个价格带 vs 基线第一个价格带
+      const baseline = task.baselineData || {};
+      const baselinePriceBand = baseline.priceBand || '';
+      const cmpEntry = ch.baseline === 'first' ? firstEntries[0] : secondEntries[0];
+      let brandFailed = false;
+      if (Object.keys(baseline).length > 0 && monthKeys.length > 0) {
+        brandFailed = true;
+        for (const key of monthKeys) {
+          if (String(cmpEntry[key] || '') !== String(baseline[key] || '')) {
+            brandFailed = false;
+            break;
+          }
+        }
       }
-      results.push(tianmaoEntry);
-      console.log('[QBT] 已计算天猫行:', tianmaoEntry);
+
+      if (brandFailed) {
+        results = results.filter(r => r.brand !== task.brand);
+        if (!failedBrands.includes(task.brand)) failedBrands.push(task.brand);
+        const fe = brandStatuses.find(e => e.brand === task.brand);
+        if (fe) fe.status = 'failed';
+      } else {
+        // 每个价格带计算一行
+        for (const fe of firstEntries) {
+          const pb = fe.priceBand || '';
+          const se = secondEntries.find(e => e.priceBand === pb);
+          if (!se) continue;
+          const calcEntry = { channel: ch.calcLabel, brand: task.brand, category: fe.category || '', priceBand: pb };
+          for (const key of monthKeys) {
+            const v1 = parseFloat(String(fe[key]).replace(/,/g, '')) || 0;
+            const v2 = parseFloat(String(se[key]).replace(/,/g, '')) || 0;
+            calcEntry[key] = ch.calc === 'tmall' ? String(v1 - v2) : String(v1 + v2);
+          }
+          results.push(calcEntry);
+        }
+        const se = brandStatuses.find(e => e.brand === task.brand);
+        if (se) se.status = 'success';
+      }
     }
   }
 
   // 判断下一步
   let nextChannel, nextBrandIdx;
-
-  if (task.channel === 'all') {
-    nextChannel = 'taobao';
+  if (task.channel === ch.first) {
+    nextChannel = ch.second;
     nextBrandIdx = task.brandIndex;
   } else {
-    nextChannel = 'all';
+    nextChannel = ch.first;
     nextBrandIdx = task.brandIndex + 1;
   }
 
-  // 检查是否全部完成
   if (nextBrandIdx >= task.brands.length || stopFlag) {
     updateState({
       status: stopFlag ? 'stopped' : 'done',
@@ -90,6 +179,8 @@ async function resumeAfterReload(task) {
       currentChannel: '',
       results: results,
       errors: errors,
+      failedBrands: failedBrands,
+      brandStatuses: brandStatuses,
       pendingTask: null
     });
     updateBadge(task.totalBrands, task.totalBrands);
@@ -97,8 +188,10 @@ async function resumeAfterReload(task) {
   }
 
   const nextBrand = task.brands[nextBrandIdx];
-
-  const nextChannelLabel = nextChannel === 'all' ? '全部' : '淘宝全部';
+  const nextChannelLabel = nextChannel === ch.first ? ch.firstLabel : ch.secondLabel;
+  // 不覆盖已有的终端状态
+  const nextEntry = brandStatuses.find(e => e.brand === nextBrand);
+  if (nextEntry && nextEntry.status === 'pending') nextEntry.status = 'running';
 
   const newPendingTask = {
     brand: nextBrand,
@@ -108,6 +201,9 @@ async function resumeAfterReload(task) {
     totalBrands: task.totalBrands,
     results: results,
     errors: errors,
+    baselineData: task.baselineData,
+    failedBrands: failedBrands,
+    brandStatuses: brandStatuses,
     stopFlag: stopFlag
   };
 
@@ -118,11 +214,13 @@ async function resumeAfterReload(task) {
     currentChannel: nextChannelLabel,
     results: results,
     errors: errors,
+    failedBrands: failedBrands,
+    brandStatuses: brandStatuses,
     pendingTask: newPendingTask
   });
   updateBadge(nextBrandIdx, task.totalBrands);
 
-  await setupAndSearch(nextBrand, nextChannel, results);
+  await setupAndSearch(nextBrand, nextChannel);
 }
 
 // === 消息监听 ===
@@ -133,7 +231,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     startNewScraping(message.brands);
   } else if (message.action === 'stopScraping') {
     stopFlag = true;
-    updateState({ stopFlag: true });
+    chrome.storage.local.get(['scraperState'], (data) => {
+      const s = data.scraperState || {};
+      const pt = s.pendingTask ? { ...s.pendingTask, stopFlag: true } : null;
+      chrome.storage.local.set({ scraperState: { ...s, stopFlag: true, pendingTask: pt } });
+    });
     updateBadge(0, 0);
     sendResponse({ accepted: true });
   }
@@ -141,59 +243,113 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function startNewScraping(brands) {
-  const brand = brands[0];
+  const ch = getLayoutChannels();
   updateBadge(0, brands.length);
+
+  const brandStatuses = brands.map(b => ({ brand: b, status: 'pending' }));
 
   updateState({
     status: 'running',
     completed: 0,
     total: brands.length,
-    current: brand,
-    currentChannel: '全部',
+    current: '',
+    currentChannel: '采集基线数据...',
     results: [],
     errors: [],
-    brands: brands,
+    baselineData: {},
+    failedBrands: [],
+    brandStatuses: brandStatuses,
     pendingTask: {
-      brand: brand,
-      channel: 'all',
-      brandIndex: 0,
+      phase: 'baseline',
       brands: brands,
       totalBrands: brands.length,
       results: [],
       errors: [],
+      failedBrands: [],
+      brandStatuses: brandStatuses,
+      baselineData: {},
       stopFlag: false
     }
   });
 
-  await setupAndSearch(brand, 'all');
+  // 空白检索：清空输入框，只选基线渠道，点检索获取基线数据
+  ensureCustomSelected();
+  const input = getElementByXPath(getBrandInputXPath());
+  if (input) {
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  // v1: 只选"全部" / v2: 只选"天猫全部"
+  const baselineLabel = ch.baseline === 'first' ? ch.firstLabel : ch.secondLabel;
+  const otherLabel = ch.baseline === 'first' ? ch.secondLabel : ch.firstLabel;
+  ensureCheckboxDeselected(otherLabel);
+  ensureCheckboxSelected(baselineLabel);
+  ensureSortOrderSelected('销售额');
+  ensureOnlySalesSelected();
+  await sleep(300);
+  clickSearch();
 }
 
 // === 设置页面并点击检索 ===
 async function setupAndSearch(brand, channel) {
+  const ch = getLayoutChannels();
   console.log('[QBT] === 设置表单: 品牌=' + brand + ', 渠道=' + channel + ' ===');
 
   ensureCustomSelected();
   inputBrandName(brand);
+  await clickFirstDropdownItem(brand);
 
-  if (channel === 'all') {
-    ensureCheckboxSelected('全部');
-  } else if (channel === 'taobao') {
-    ensureCheckboxDeselected('全部');
-    ensureCheckboxSelected('淘宝全部');
+  if (channel === ch.first) {
+    // first channel: ensure only it's selected
+    const firstLabel = ch.firstLabel;
+    const secondLabel = ch.secondLabel;
+    ensureCheckboxDeselected(secondLabel);
+    ensureCheckboxSelected(firstLabel);
+  } else {
+    // second channel: deselect first, select second
+    const firstLabel = ch.firstLabel;
+    const secondLabel = ch.secondLabel;
+    ensureCheckboxDeselected(firstLabel);
+    ensureCheckboxSelected(secondLabel);
   }
 
   ensureSortOrderSelected('销售额');
+  ensureOnlySalesSelected();
 
   console.log('[QBT] === 表单设置完成，即将点击检索 ===');
   await sleep(300);
   clickSearch();
 }
 
+// === 页面元素 XPath 助手 ===
+const FORM_BASE = {
+  v1: '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form',
+  v2: '/html/body/div[1]/div[2]/div[1]/div[4]/div/div[3]/div[2]/form',
+};
+const INDICATOR_BASE = {
+  v1: '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]',
+  v2: '/html/body/div[1]/div[2]/div[1]/div[4]/div/div[3]/div[5]',
+};
+
+function formXpath(suffix) { return FORM_BASE[detectLayout()] + suffix; }
+function indicatorXpath(suffix) { return INDICATOR_BASE[detectLayout()] + suffix; }
+
+// 复选框 XPath — v1: 有"全部" / v2: 只有"淘宝全部"+"天猫全部"
+const CHECKBOX_XPATHS = {
+  v1: {
+    '全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[1]/label',
+    '淘宝全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[2]/label',
+  },
+  v2: {
+    '淘宝全部': '/html/body/div[1]/div[2]/div[1]/div[4]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/label[1]',
+    '天猫全部': '/html/body/div[1]/div[2]/div[1]/div[4]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/label[2]',
+  },
+};
+
 // === 下拉框操作 ===
 function ensureCustomSelected() {
-  const select = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[2]/td[2]/div/select'
-  );
+  const select = getElementByXPath(formXpath('/table/tbody/tr[2]/td[2]/div/select'));
   if (!select) { console.warn('[QBT] 未找到"自定义"下拉框元素'); return; }
 
   const selectedOption = select.options[select.selectedIndex];
@@ -203,11 +359,12 @@ function ensureCustomSelected() {
   select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+// 品牌输入框 XPath
+function getBrandInputXPath() { return formXpath('/table/tbody/tr[2]/td[2]/div/input'); }
+
 // === 品牌输入 ===
 function inputBrandName(brand) {
-  const input = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[2]/td[2]/div/input'
-  );
+  const input = getElementByXPath(getBrandInputXPath());
   if (!input) { console.warn('[QBT] 未找到品牌输入框元素'); return; }
 
   input.value = '';
@@ -215,65 +372,83 @@ function inputBrandName(brand) {
   input.value = brand;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.focus();
 }
 
-// === 复选框操作 ===
-// "全部" 和 "淘宝全部" 用精确 XPath 定位（页面上可能有多个同名元素）
-const CHECKBOX_XPATHS = {
-  '全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[1]/label',
-  '淘宝全部': '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[6]/td[2]/div/div[1]/div[2]/label'
-};
+// === 自动完成：调接口取第一条建议，填入输入框 ===
+async function clickFirstDropdownItem(brand) {
+  const input = getElementByXPath(getBrandInputXPath());
+  if (!input) { console.warn('[QBT] 未找到输入框'); return false; }
+
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const cid = urlParams.get('cid') || '';
+    const site = urlParams.get('site') || 'ali';
+
+    const apiUrl = 'https://art.nint.com/stat-ali-new/rbidnameautocomplete' +
+      '?site=' + encodeURIComponent(site) +
+      '&cid=' + encodeURIComponent(cid) +
+      '&keyword=' + encodeURIComponent(brand);
+
+    const response = await fetch(apiUrl, { credentials: 'include' });
+    const suggestions = await response.json();
+
+    if (Array.isArray(suggestions) && suggestions.length > 0) {
+      const first = suggestions[0];
+      console.log('[QBT] 自动完成第一项:', first);
+      input.value = first;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+
+    console.warn('[QBT] 自动完成接口返回空');
+    return false;
+  } catch (err) {
+    console.warn('[QBT] 自动完成接口请求失败:', err.message);
+    return false;
+  }
+}
 
 function getCheckboxLabel(labelText) {
-  if (CHECKBOX_XPATHS[labelText]) {
-    const el = getElementByXPath(CHECKBOX_XPATHS[labelText]);
+  const layout = detectLayout();
+  const paths = CHECKBOX_XPATHS[layout];
+  if (paths && paths[labelText]) {
+    const el = getElementByXPath(paths[labelText]);
     if (el) return el;
   }
   return findLabelByText(labelText);
 }
 
+function isCheckboxChecked(label) {
+  const input = label.querySelector('input') || label.previousElementSibling;
+  if (input && (input.type === 'checkbox' || input.type === 'radio') && input.checked) return true;
+  const afterStyle = window.getComputedStyle(label, '::after');
+  return afterStyle && afterStyle.content && afterStyle.content !== 'none';
+}
+
 function ensureCheckboxSelected(labelText) {
-  const targetLabel = getCheckboxLabel(labelText);
-  if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
+  const label = getCheckboxLabel(labelText);
+  if (!label) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
-  const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
-  const inputChecked = input && (input.type === 'checkbox' || input.type === 'radio') && input.checked;
-  const afterStyle = window.getComputedStyle(targetLabel, '::after');
-  const afterContent = afterStyle ? afterStyle.content : 'none';
-
-  console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
-
-  // 任一信号指示已选中 → 跳过
-  if (inputChecked) return;
-  if (afterContent && afterContent !== 'none') return;
-
+  if (isCheckboxChecked(label)) return;
   console.log('[QBT] 点击选中"' + labelText + '"');
-  targetLabel.click();
+  label.click();
 }
 
 function ensureCheckboxDeselected(labelText) {
-  const targetLabel = getCheckboxLabel(labelText);
-  if (!targetLabel) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
+  const label = getCheckboxLabel(labelText);
+  if (!label) { console.warn('[QBT] 未找到"' + labelText + '"复选框元素'); return; }
 
-  const input = targetLabel.querySelector('input') || targetLabel.previousElementSibling;
-  const inputChecked = input && (input.type === 'checkbox' || input.type === 'radio') && input.checked;
-  const afterStyle = window.getComputedStyle(targetLabel, '::after');
-  const afterContent = afterStyle ? afterStyle.content : 'none';
-
-  console.log('[QBT] 复选框"' + labelText + '": inputChecked=' + inputChecked + ', afterContent=' + afterContent);
-
-  // 两个信号都指示未选中 → 已取消，跳过；否则点击取消
-  if (!inputChecked && (!afterContent || afterContent === 'none')) return;
-
+  if (!isCheckboxChecked(label)) return;
   console.log('[QBT] 点击取消"' + labelText + '"');
-  targetLabel.click();
+  label.click();
 }
 
 // === 排序方式操作 ===
 function ensureSortOrderSelected(labelText) {
-  let targetLabel = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/table/tbody/tr[9]/td[2]/label[2]'
-  );
+  const tr = detectLayout() === 'v1' ? 'tr[9]' : 'tr[8]';
+  let targetLabel = getElementByXPath(formXpath('/table/tbody/' + tr + '/td[2]/label[2]'));
   if (!targetLabel) {
     targetLabel = findLabelByText(labelText);
   }
@@ -288,7 +463,7 @@ function ensureSortOrderSelected(labelText) {
 // === 指标选择：确保只有"销售额"被选中 ===
 function ensureOnlySalesSelected() {
   const container = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div[1]/div/div[1]/div[1]/div/div[1]'
+    indicatorXpath('/div/div[2]/div[1]/div/div[1]/div[1]/div/div[1]')
   );
   if (!container) { console.warn('[QBT] 未找到指标列表容器'); return; }
 
@@ -330,9 +505,7 @@ function findLabelByText(text) {
 
 // === 检索按钮 ===
 function clickSearch() {
-  const btn = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[2]/form/div[2]/button'
-  );
+  const btn = getElementByXPath(formXpath('/div[2]/button'));
   if (btn) btn.click();
   else console.warn('[QBT] 未找到检索按钮');
 }
@@ -393,12 +566,12 @@ function parseTableDOM(table) {
   const trs = table.querySelectorAll('tr');
   if (trs.length < 3) { console.warn('[QBT] 表格行数<3'); return []; }
 
-  // Row 0: 提取月份名（匹配6位数字的单元格）
+  // Row 0: 提取日期列名（月维度 202604 / 日维度 2026-01-01）
   const headerCells = Array.from(trs[0].querySelectorAll('th, td'));
   const months = [];
   for (const cell of headerCells) {
     const text = cell.textContent.trim();
-    if (/^\d{6}$/.test(text)) months.push(text);
+    if (/^\d{4}(?:\d{2}|-\d{2}(?:-\d{2})?)$/.test(text)) months.push(text);
   }
   console.log('[QBT] 月份:', months);
 
@@ -416,82 +589,42 @@ function parseTableDOM(table) {
 
   if (salesIndices.length === 0) { console.warn('[QBT] 未找到销售额列'); return []; }
 
-  // Row 2: 数据行
-  const dataCells = Array.from(trs[2].querySelectorAll('td'));
-
-  // 数据行第一列是 "0-∞元" 类别占位，需要偏移 +1
-  const firstCellText = dataCells.length > 0 ? dataCells[0].textContent.trim() : '';
-  const dataOffset = (firstCellText.includes('元') || firstCellText === '') ? 1 : 0;
-  console.log('[QBT] 数据行第一格:', firstCellText, '→ 偏移:', dataOffset);
-
-  // 一一对应：第 i 个"销售额" → 第 i 个月（跳过最后的总计列）
   const categoryName = getCategoryFromBreadcrumb();
-  console.log('[QBT] 类目名称:', categoryName);
-
-  const rowData = { category: categoryName };
   const count = Math.min(salesIndices.length, months.length);
-  for (let i = 0; i < count; i++) {
-    const cellIdx = salesIndices[i] + dataOffset;
-    rowData[months[i]] = (cellIdx < dataCells.length && dataCells[cellIdx]) ? dataCells[cellIdx].textContent.trim() : '';
+  const results = [];
+
+  // 数据行: row 2 到 row n-2（跳过表头、子表头、总计行），支持多价格带
+  for (let r = 2; r < trs.length - 1; r++) {
+    const cells = Array.from(trs[r].querySelectorAll('td'));
+    if (cells.length === 0) continue;
+    const priceBand = cells[0].textContent.trim();
+    const dataOffset = (priceBand.includes('元') || priceBand === '') ? 1 : 0;
+
+    const rowData = { category: categoryName, priceBand: priceBand };
+    for (let i = 0; i < count; i++) {
+      const cellIdx = salesIndices[i] + dataOffset;
+      rowData[months[i]] = (cellIdx < cells.length && cells[cellIdx]) ? cells[cellIdx].textContent.trim() : '';
+    }
+    results.push(rowData);
   }
 
-  console.log('[QBT] 解析结果:', rowData);
-  return [rowData];
+  console.log('[QBT] 解析结果:', results.length, '行');
+  return results;
 }
 
 // === 从面包屑获取类目名称 ===
 function getCategoryFromBreadcrumb() {
-  // 策略1: 用户提供的精确 XPath
-  let container = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]/div[1]'
-  );
-  if (!container) {
-    container = getElementByXPath(
-      '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]'
-    );
-  }
-
-  if (container) {
-    const links = container.querySelectorAll('a');
+  const xpaths = [
+    '/html/body/div[1]/div[2]/div[1]/div[4]/div/div[1]',
+    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[1]',
+  ];
+  for (const xp of xpaths) {
+    const container = getElementByXPath(xp);
+    if (!container) continue;
+    const links = container.querySelectorAll('a[href*="stat-ali-new?cid="]:not([href*="pos="])');
     const names = Array.from(links).map(a => a.textContent.trim()).filter(t => t.length > 0);
-    console.log('[QBT] XPath面包屑:', names);
-    if (names.length > 0) return names[names.length - 1];
+    if (names.length > 0) return names.join('>');
   }
-
-  // 策略2: 全页搜索面包屑（含 >=2 个链接且类目名合理的容器）
-  const allWithLinks = document.querySelectorAll('a');
-  // 找有 ">" 或 "/" 分隔符的连续链接组
-  const candidates = [];
-  for (const a of allWithLinks) {
-    const text = a.textContent.trim();
-    if (text.length >= 2 && text.length < 20 && !/^\d/.test(text)) {
-      // 检查父元素是否包含多个链接
-      const parent = a.parentElement;
-      if (parent) {
-        const siblingLinks = parent.querySelectorAll('a');
-        if (siblingLinks.length >= 2) {
-          const allTexts = Array.from(siblingLinks).map(l => l.textContent.trim()).filter(t => t.length > 1);
-          if (allTexts.length >= 2 && !candidates.includes(allTexts)) {
-            candidates.push(allTexts);
-          }
-        }
-      }
-    }
-  }
-
-  // 取最长的面包屑（级数最多的）
-  let best = [];
-  for (const c of candidates) {
-    if (c.length > best.length) best = c;
-  }
-
-  if (best.length > 0) {
-    const last = best[best.length - 1];
-    console.log('[QBT] 回退面包屑:', best, '→ 类目:', last);
-    return last;
-  }
-
-  console.warn('[QBT] 未找到面包屑');
   return '';
 }
 
@@ -499,54 +632,10 @@ function getCategoryFromBreadcrumb() {
 // === 检查页面是否显示"暂无符合条件的数据" ===
 function checkNoData() {
   const el = getElementByXPath(
-    '/html/body/div[1]/div[2]/div[1]/div[3]/div/div[3]/div[5]/div/div[2]/div'
+    indicatorXpath('/div/div[2]/div')
   );
   if (!el) return false;
   return el.textContent.includes('暂时没有符合条件的数据');
-}
-
-// === 跳过当前品牌，直接进入下一个 ===
-function skipToNextBrand(task, results, errors) {
-  const nextBrandIdx = task.brandIndex + 1;
-  if (nextBrandIdx >= task.brands.length || stopFlag) {
-    updateState({
-      status: stopFlag ? 'stopped' : 'done',
-      completed: task.totalBrands,
-      total: task.totalBrands,
-      current: '',
-      currentChannel: '',
-      results: results,
-      errors: errors,
-      pendingTask: null
-    });
-    updateBadge(task.totalBrands, task.totalBrands);
-    return;
-  }
-
-  const nextBrand = task.brands[nextBrandIdx];
-  const newPendingTask = {
-    brand: nextBrand,
-    channel: 'all',
-    brandIndex: nextBrandIdx,
-    brands: task.brands,
-    totalBrands: task.totalBrands,
-    results: results,
-    errors: errors,
-    stopFlag: stopFlag
-  };
-
-  updateState({
-    completed: nextBrandIdx,
-    total: task.totalBrands,
-    current: nextBrand,
-    currentChannel: '全部',
-    results: results,
-    errors: errors,
-    pendingTask: newPendingTask
-  });
-  updateBadge(nextBrandIdx, task.totalBrands);
-
-  setupAndSearch(nextBrand, 'all');
 }
 
 function getElementByXPath(xpath) {

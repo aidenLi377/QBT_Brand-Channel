@@ -161,13 +161,15 @@ body::before {
 }
 
 .brand-count {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   color: #c2410c;
   background: linear-gradient(135deg, #fff7ed, #fef2f2);
   padding: 3px 10px;
   border-radius: 20px;
   border: 1px solid rgba(251, 146, 60, 0.2);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* === Textarea === */
@@ -200,36 +202,12 @@ body::before {
   box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.08), 0 0 16px rgba(251, 191, 36, 0.06);
 }
 
-/* === Clear Button === */
-.clear-btn {
-  position: absolute;
-  top: 10px; right: 10px;
-  width: 24px; height: 24px;
-  border: none;
-  background: rgba(251, 146, 60, 0.08);
-  color: #c2410c;
-  border-radius: 50%;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transition: all 0.2s;
-}
-.clear-btn.visible { display: flex; }
-.clear-btn:hover {
-  background: rgba(225, 29, 72, 0.12);
-  color: #e11d48;
-  transform: scale(1.1);
-}
-
 /* === Progress === */
 .progress-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-bottom: 14px;
 }
 
@@ -244,18 +222,26 @@ body::before {
   letter-spacing: 0.04em;
 }
 
-.current-brand {
+.current-brand-name {
   font-size: 11.5px;
   font-weight: 600;
   color: #c2410c;
-  max-width: 160px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.current-channel-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #c2410c;
   background: linear-gradient(135deg, #fff7ed, #fef2f2);
-  padding: 4px 12px;
+  padding: 3px 10px;
   border-radius: 20px;
   border: 1px solid rgba(251, 146, 60, 0.15);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .progress-track {
@@ -280,6 +266,108 @@ body::before {
   width: 24px; height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.45));
   border-radius: 0 3px 3px 0;
+}
+
+/* === Brand Status List === */
+.brand-status-list {
+  max-height: 185px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.brand-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.brand-status-name {
+  color: #431407;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.brand-status-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.brand-status-row.pending .brand-status-name { color: #a8a29e; }
+.brand-status-row.pending .brand-status-badge {
+  background: #f5f5f4; color: #78716c;
+}
+
+.brand-status-row.running .brand-status-name { color: #ea580c; font-weight: 700; }
+.brand-status-row.running {
+  background: rgba(249, 115, 22, 0.06);
+}
+.brand-status-row.running .brand-status-badge {
+  background: linear-gradient(135deg, #fff7ed, #fef2f2);
+  color: #ea580c;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.brand-status-row.success .brand-status-badge {
+  background: #f7fee7; color: #65a30d;
+}
+
+.brand-status-row.no_data .brand-status-badge {
+  background: #fef3c7; color: #b45309;
+}
+
+.brand-status-row.failed .brand-status-badge {
+  background: #fff1f2; color: #e11d48;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.brand-status-list::-webkit-scrollbar { width: 4px; }
+.brand-status-list::-webkit-scrollbar-track { background: transparent; }
+.brand-status-list::-webkit-scrollbar-thumb {
+  background: #e7e5e4;
+  border-radius: 2px;
+}
+
+/* === Reset Button (in header) === */
+.reset-btn {
+  margin-left: auto;
+  width: 28px; height: 28px;
+  border: 1.5px solid rgba(120, 113, 108, 0.12);
+  background: rgba(255, 255, 255, 0.4);
+  color: #a8a29e;
+  border-radius: 50%;
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  line-height: 1;
+}
+.reset-btn:hover {
+  color: #e11d48;
+  border-color: rgba(225, 29, 72, 0.3);
+  background: #fff1f2;
+  transform: rotate(90deg);
 }
 
 /* === Actions === */
@@ -329,56 +417,6 @@ body::before {
   border: 1.5px solid rgba(101, 163, 13, 0.15);
 }
 .btn-success:hover { background: #f7fee7; border-color: rgba(101, 163, 13, 0.3); }
-
-/* === Status === */
-.status-message {
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  font-size: 11.5px;
-  font-weight: 500;
-  text-align: center;
-}
-
-.status-message.success {
-  background: linear-gradient(135deg, rgba(101, 163, 13, 0.06), rgba(132, 204, 22, 0.04));
-  color: #3f6212;
-  border: 1px solid rgba(101, 163, 13, 0.12);
-}
-.status-message.error {
-  background: linear-gradient(135deg, rgba(225, 29, 72, 0.06), rgba(244, 63, 94, 0.04));
-  color: #9f1239;
-  border: 1px solid rgba(225, 29, 72, 0.12);
-}
-.status-message.info {
-  background: linear-gradient(135deg, rgba(234, 88, 12, 0.06), rgba(249, 115, 22, 0.04));
-  color: #7c2d12;
-  border: 1px solid rgba(234, 88, 12, 0.12);
-}
-
-/* === Pin === */
-.pin-btn {
-  margin-left: auto;
-  width: 30px; height: 30px;
-  border: 1.5px solid rgba(251, 146, 60, 0.15);
-  background: rgba(255, 255, 255, 0.5);
-  color: #f97316;
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.2s;
-  backdrop-filter: blur(4px);
-}
-.pin-btn:hover {
-  color: #ea580c;
-  border-color: #fb923c;
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 2px 10px rgba(234, 88, 12, 0.15);
-}
-.pin-btn svg { width: 14px; height: 14px; }
 
 /* === Utility === */
 .hidden { display: none !important; }
